@@ -1,14 +1,36 @@
-# ESP32-S3 Voice AI Wearable Inference Pendant
+# ESP32 Voice AI Wearable Inference Pendant
 
-An offline Voice AI wearable pendant built from a Waveshare ESP32-S3 Touch AMOLED 1.75C and an Android companion app.
+An open-source, touch-to-talk Voice AI wearable built around an ESP32 pendant and an Android companion app. It captures a spoken thought, shows a responsive animated face, and turns that thought into a private note or spoken answer.
 
-The ESP32 owns the touch-first animated face, microphone capture, speaker playback, and BLE transport. The Android phone owns local speech recognition, note storage/search, local LLM inference, and speech synthesis. After model packs are downloaded, no speech or note content leaves the phone.
+The pendant handles interaction, audio, animation, and Bluetooth Low Energy. The Android app handles on-device speech recognition, local LLM inference, speech synthesis, encrypted notes, and memory retrieval.
 
-## Layout
+## How it works
 
-- `firmware/` — ESP-IDF application for the pendant.
-- `app/` — Flutter Android companion; Kotlin owns the persistent Bluetooth and AI service.
-- `protocol/` — versioned BLE packet contract shared by both implementations.
+1. Hold the pendant face to speak; release it when finished.
+2. The ESP32 streams the captured audio to the paired Android phone over Bluetooth Low Energy.
+3. The phone processes the request locally and returns status, speech, and mouth-animation cues.
+4. Say **remember**, **note**, or **save** to explicitly store the resulting transcript as an encrypted note.
+
+## Features
+
+- Touch-to-talk voice interaction with a reactive animated face.
+- Private Bluetooth Low Energy audio and control link between pendant and phone.
+- Flutter Android companion with a persistent connected-device service.
+- Local-first note search and encrypted transcript storage.
+- Designed for fully on-device STT, LLM inference, TTS, and note retrieval.
+- No automatic recording and no audio archive: capture happens only during an intentional hold.
+
+## Privacy model
+
+Voice and notes are intended to remain on the paired phone after the model pack is installed. The project does not use cloud inference, analytics, or account-based syncing. Notes are stored as transcripts only and encrypted at rest with a key protected by Android Keystore.
+
+## Project structure
+
+| Directory | Purpose |
+| --- | --- |
+| `firmware/` | ESP-IDF firmware for interaction, audio, display UI, and BLE. |
+| `app/` | Flutter UI plus Kotlin Android service, Bluetooth client, and encrypted notes. |
+| `protocol/` | Shared versioned BLE packet contract. |
 
 ## Quick start
 
@@ -20,25 +42,20 @@ flutter run
 ```
 
 ```sh
-# ESP32-S3 firmware (ESP-IDF 5.5+)
+# ESP32 firmware
 cd firmware
 idf.py set-target esp32s3
 idf.py build flash monitor
 ```
 
-The model pack is intentionally excluded from Git. Local model assets and their
-signed SHA-256 manifest must be installed on the phone before inference is enabled.
+## Current status
 
-## Implemented foundation
+The pendant UI, touch-to-talk state flow, BLE protocol, Android foreground service, and encrypted note store are implemented. The native adapters for local STT, LLM inference, and TTS are the next integration step; until they are bundled, the app fails closed rather than sending voice data to a cloud service.
 
-- Procedural LVGL eyes, mouth, glow ring, status text, and touch-and-hold PTT.
-- ESP-IDF audio task: 16 kHz microphone Opus uplink and 24 kHz speaker Opus downlink.
-- Versioned private BLE GATT protocol, pairing configuration, MTU 247, packet validation, and state cues.
-- Flutter black/cyan companion UI and a Kotlin foreground connected-device service.
-- Encrypted SQLCipher transcript-only note store with an Android Keystore-wrapped key.
-- A strict offline model-pack and inference interface. It currently fails closed until
-  the native sherpa-onnx, llama.cpp, and Kokoro bindings are packaged.
+Model files are deliberately excluded from Git. Installers must verify a signed SHA-256 manifest before placing a local model pack on the phone.
 
-See [protocol/voice-link-v1.md](protocol/voice-link-v1.md),
-[firmware/README.md](firmware/README.md), and [app/README.md](app/README.md)
-before changing either endpoint.
+## Documentation
+
+- [Voice Link protocol](protocol/voice-link-v1.md)
+- [Firmware guide](firmware/README.md)
+- [Android companion guide](app/README.md)
