@@ -1,0 +1,47 @@
+# Operating system and editors
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Flutter and Android build output
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/android/.gradle/
+app/android/app/build/
+app/android/local.properties
+app/android/key.properties
+*.keystore
+*.jks
+
+# ESP-IDF generated configuration and build output
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock
+firmware/managed_components/
+
+# Downloaded local-inference model packs: never commit multi-GB assets
+/models/
+/model-packs/
+app/local-model-packs/
+app/android/app/src/main/assets/models/
+*.gguf
+*.onnx
+*.ort
+*.safetensors
+*.tflite
+*.pt
+*.pth
+
+# Secrets, logs, and temporary files
+.env
+.env.*
+!.env.example
+*.log
+tmp/
+.cache/

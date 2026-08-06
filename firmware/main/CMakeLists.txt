@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_state.c"
+        "audio_engine.c"
+        "ble_transport.c"
+        "face_ui.c"
+        "voice_link.c"
+        "voice_runtime.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        bt
+        driver
+        esp_event
+        esp_timer
+        freertos
+        nvs_flash
+        esp_codec_dev
+        waveshare__esp32_s3_touch_amoled_1_75c
+        esphome__micro-opus
+)

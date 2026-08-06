@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: pub
+    directory: /app
+    schedule:
+      interval: monthly
+  - package-ecosystem: gradle
+    directory: /app/android
+    schedule:
+      interval: monthly

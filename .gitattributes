@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.wav binary
+*.mp3 binary
+*.opus binary
+*.gguf binary
+*.onnx binary
+*.safetensors binary

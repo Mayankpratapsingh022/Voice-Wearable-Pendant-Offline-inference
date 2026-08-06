@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose an improvement with its hardware, power, and privacy implications.
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: considerations
+    attributes:
+      label: Considerations
+      options:
+        - label: I considered effects on battery life and display performance.
+        - label: I considered whether this adds network, privacy, or model-size requirements.

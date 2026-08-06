@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible problem with firmware, BLE, or the Android companion.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never attach private audio, transcripts, model files, keys, or pairing information.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - ESP32 firmware
+        - BLE transport
+        - Android service
+        - Flutter interface
+        - Local inference
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. …\n2. …\n3. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
