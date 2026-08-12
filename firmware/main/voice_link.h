@@ -23,6 +23,22 @@ typedef enum {
     VOICE_CONTROL_SAVED = 0x05,
     VOICE_CONTROL_IDLE = 0x06,
     VOICE_CONTROL_ERROR = 0x07,
+    // Pendant -> phone intent. The phone owns policy and replies before the
+    // pendant opens its microphone.
+    VOICE_CONTROL_ASSISTANT_REQUEST = 0x08,
+    VOICE_CONTROL_ASSISTANT_CANCEL = 0x09,
+    VOICE_CONTROL_MEETING_TOGGLE = 0x0A,
+    // Phone -> pendant acknowledgements.
+    VOICE_CONTROL_ASSISTANT_ACCEPTED = 0x0B,
+    VOICE_CONTROL_MEETING_STARTED = 0x0C,
+    VOICE_CONTROL_MEETING_STOPPED = 0x0D,
+    VOICE_CONTROL_UNAVAILABLE = 0x0E,
+    // Wi-Fi provisioning is carried once over the already-paired BLE control
+    // link: [opcode, ssid_length, password_length, ssid..., password...].
+    VOICE_CONTROL_WIFI_PROVISION = 0x0F,
+    // Pendant -> phone BLE status. The trailing UTF-8 text is its local IP.
+    VOICE_CONTROL_WIFI_READY = 0x10,
+    VOICE_CONTROL_WIFI_FAILED = 0x11,
 } voice_control_opcode_t;
 
 typedef struct {

@@ -42,9 +42,22 @@ Reject frames when the version is unsupported, the length is not exactly `12 + p
 
 Control opcodes are one byte. `0x01` capture started, `0x02` capture stopped, `0x03` phone processing, `0x04` phone speaking, `0x05` note saved, `0x06` idle, and `0x07` error. `0x07` is followed by a UTF-8 error message of no more than 80 bytes.
 
+The physical-control handshake keeps microphone ownership on Android:
+
+| Value | Direction | Meaning |
+| ---: | --- | --- |
+| `0x08` | pendant → phone | Assistant request from the PWR short press |
+| `0x09` | pendant → phone | Cancel current assistant turn |
+| `0x0A` | pendant → phone | Toggle meeting capture from BOOT double press |
+| `0x0B` | phone → pendant | Assistant accepted; pendant waits for its local cue before opening the mic |
+| `0x0C` | phone → pendant | Meeting accepted and started |
+| `0x0D` | phone → pendant | Meeting stopped; pendant closes the mic |
+| `0x0E` | phone → pendant | Request unavailable; optional UTF-8 reason follows |
+
 ## Timing rules
 
 - The pendant sends a capture-start control frame before its first microphone frame and a capture-stop control frame after its last frame.
+- On a local button action, the pendant plays its short feedback sound before starting capture and gates the microphone for 260 ms. This avoids sending the cue back to Android as speech.
 - The phone timestamps speaker frames against a single session playback timeline. The pendant starts playback only after it has at least five frames buffered.
 - `mouth_level` is measured from the uncompressed TTS PCM that produced the frame. The pendant applies it when the timestamp reaches its playback clock, not when a BLE notification arrives.
 - Sequence gaps are allowed; the receiver counts them as packet loss and continues. Never replay an audio frame.

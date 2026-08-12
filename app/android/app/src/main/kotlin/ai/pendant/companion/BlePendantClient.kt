@@ -18,6 +18,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import java.util.ArrayDeque
 import java.util.UUID
@@ -45,9 +47,16 @@ class BlePendantClient(
     private var speaker: BluetoothGattCharacteristic? = null
     private var telemetry: BluetoothGattCharacteristic? = null
     private val notificationQueue = ArrayDeque<BluetoothGattCharacteristic>()
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+    private var reconnectAttempts = 0
+    private var reconnectEnabled = false
+    private val reconnectRunnable = Runnable {
+        if (reconnectEnabled) resumeKnownDevice()
+    }
 
     @SuppressLint("MissingPermission")
     fun resumeKnownDevice() {
+        reconnectEnabled = true
         val address = preferences.getString(KEY_DEVICE_ADDRESS, null) ?: run {
             listener.onConnectionChanged(Connection.DISCONNECTED)
             return
@@ -79,6 +88,8 @@ class BlePendantClient(
             return
         }
         stopScan()
+        reconnectEnabled = true
+        cancelReconnect()
         listener.onConnectionChanged(Connection.PAIRING)
         scanner = adapter.bluetoothLeScanner
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
@@ -93,6 +104,16 @@ class BlePendantClient(
         send(control, VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, payload), false)
     }
 
+    @SuppressLint("MissingPermission")
+    fun sendWifiProvision(ssid: String, password: String) {
+        val ssidBytes = ssid.encodeToByteArray()
+        val passwordBytes = password.encodeToByteArray()
+        require(ssidBytes.isNotEmpty() && ssidBytes.size <= 32)
+        require(passwordBytes.size <= 63)
+        val payload = byteArrayOf(VoiceLink.WIFI_PROVISION, ssidBytes.size.toByte(), passwordBytes.size.toByte()) + ssidBytes + passwordBytes
+        send(control, VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, payload), false)
+    }
+
     /** Sends a 20 ms 24 kHz Opus frame. The device uses [mouthLevel] on the same playback timeline. */
     @SuppressLint("MissingPermission")
     fun sendSpeakerFrame(opus: ByteArray, timestampMs: Long, mouthLevel: Int) {
@@ -101,6 +122,8 @@ class BlePendantClient(
 
     @SuppressLint("MissingPermission")
     fun close(forgetDevice: Boolean = false) {
+        reconnectEnabled = false
+        cancelReconnect()
         stopScan()
         gatt?.close()
         gatt = null
@@ -114,6 +137,7 @@ class BlePendantClient(
         stopScan()
         gatt?.close()
         listener.onConnectionChanged(Connection.CONNECTING)
+        reconnectEnabled = true
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
@@ -175,6 +199,8 @@ class BlePendantClient(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
                 preferences.edit().putString(KEY_DEVICE_ADDRESS, gatt.device.address).apply()
+                reconnectAttempts = 0
+                cancelReconnect()
                 listener.onConnectionChanged(Connection.CONNECTED)
                 gatt.requestMtu(247)
                 return
@@ -182,6 +208,7 @@ class BlePendantClient(
             clearCharacteristics()
             listener.onConnectionChanged(Connection.DISCONNECTED)
             gatt.close()
+            scheduleReconnect()
         }
 
         @SuppressLint("MissingPermission")
@@ -277,6 +304,17 @@ class BlePendantClient(
         telemetry = null
         notificationQueue.clear()
     }
+
+    private fun scheduleReconnect() {
+        if (!reconnectEnabled || preferences.getString(KEY_DEVICE_ADDRESS, null) == null) return
+        reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(5)
+        val delayMs = (1_000L shl reconnectAttempts).coerceAtMost(16_000L)
+        cancelReconnect()
+        listener.onError("Pendant connection lost — retrying in ${delayMs / 1000}s")
+        reconnectHandler.postDelayed(reconnectRunnable, delayMs)
+    }
+
+    private fun cancelReconnect() = reconnectHandler.removeCallbacks(reconnectRunnable)
 
     private fun hasScanPermission(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
         context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED

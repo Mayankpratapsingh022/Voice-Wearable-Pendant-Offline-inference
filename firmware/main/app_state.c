@@ -10,9 +10,11 @@ static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 void app_state_init(void) {
     portENTER_CRITICAL(&state_lock);
     memset(&state, 0, sizeof(state));
-    state.face = APP_FACE_PAIRING;
+    // Waiting for a phone is still a normal idle screen.  The pairing radar is
+    // used only for an explicit pairing transaction requested by the app.
+    state.face = APP_FACE_DISCONNECTED;
     state.battery_percent = 100;
-    strlcpy(state.status, "Pair with phone", sizeof(state.status));
+    strlcpy(state.status, "Phone not connected", sizeof(state.status));
     portEXIT_CRITICAL(&state_lock);
 }
 

@@ -9,6 +9,10 @@
 
 esp_err_t voice_runtime_init(void);
 void voice_runtime_request_capture(bool enabled);
+void voice_runtime_request_assistant(void);
+void voice_runtime_cancel_assistant(void);
+void voice_runtime_request_meeting_toggle(void);
 void voice_runtime_on_phone_packet(const voice_link_packet_t *packet);
 void voice_runtime_on_ble_connection(bool connected);
+void voice_runtime_on_wifi_connection(bool connected);
 void voice_runtime_on_mic_opus(const uint8_t *data, size_t size, uint32_t timestamp_ms);

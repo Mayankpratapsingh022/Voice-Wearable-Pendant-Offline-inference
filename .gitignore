@@ -45,3 +45,17 @@ app/android/app/src/main/assets/models/
 *.log
 tmp/
 .cache/
+
+# Local tooling dependencies and generated Rive/EAF preview assets
+tools/rive-eaf-export/node_modules/
+tools/rive-eaf-export/out/
+
+# Animation workbench
+# Keep experiments, renderer caches, intermediate frames, and alternate exports
+# local. The two approved deliverables are the only animation assets under
+# version control and live in /animations.
+/videos/
+/firmware/assets/
+/24941-46557-expression-grid.riv
+/tools/rive-eaf-export/
+/scripts/package_orbital_frames.py

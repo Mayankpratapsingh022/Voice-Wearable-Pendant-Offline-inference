@@ -20,6 +20,16 @@ object VoiceLink {
     const val SAVED: Byte = 0x05
     const val IDLE: Byte = 0x06
     const val ERROR: Byte = 0x07
+    const val ASSISTANT_REQUEST: Byte = 0x08
+    const val ASSISTANT_CANCEL: Byte = 0x09
+    const val MEETING_TOGGLE: Byte = 0x0a
+    const val ASSISTANT_ACCEPTED: Byte = 0x0b
+    const val MEETING_STARTED: Byte = 0x0c
+    const val MEETING_STOPPED: Byte = 0x0d
+    const val UNAVAILABLE: Byte = 0x0e
+    const val WIFI_PROVISION: Byte = 0x0f
+    const val WIFI_READY: Byte = 0x10
+    const val WIFI_FAILED: Byte = 0x11
 
     data class Packet(
         val kind: Byte,

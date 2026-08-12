@@ -10,16 +10,27 @@ class ModelPack(context: Context) {
     data class Status(
         val ready: Boolean,
         val missing: List<String>,
+        val installedBytes: Long,
     ) {
-        fun toMap(): Map<String, Any> = mapOf("ready" to ready, "missing" to missing)
+        fun toMap(): Map<String, Any> = mapOf(
+            "ready" to ready,
+            "missing" to missing,
+            "installedBytes" to installedBytes,
+        )
     }
 
     fun status(): Status {
         val missing = REQUIRED_RELATIVE_PATHS.filterNot { File(root, it).isFile }
-        return Status(missing.isEmpty(), missing)
+        return Status(missing.isEmpty(), missing, rootSize(root))
     }
 
     fun root(): File = root.also { it.mkdirs() }
+
+    private fun rootSize(file: File): Long = when {
+        !file.exists() -> 0L
+        file.isFile -> file.length()
+        else -> file.listFiles()?.sumOf(::rootSize) ?: 0L
+    }
 
     companion object {
         /**
@@ -28,11 +39,13 @@ class ModelPack(context: Context) {
          */
         val REQUIRED_RELATIVE_PATHS = listOf(
             "llm/qwen3-1.7b-q8_0.gguf",
-            "stt/moonshine-base-en/encoder.onnx",
-            "stt/moonshine-base-en/decoder.onnx",
-            "tts/kokoro-v0.19/model.onnx",
-            "tts/kokoro-v0.19/voices.bin",
-            "embeddings/bge-small-en-v1.5/model.onnx",
+            "stt/moonshine-base-en-int8/preprocess.onnx",
+            "stt/moonshine-base-en-int8/encode.int8.onnx",
+            "stt/moonshine-base-en-int8/cached_decode.int8.onnx",
+            "stt/moonshine-base-en-int8/uncached_decode.int8.onnx",
+            "stt/moonshine-base-en-int8/tokens.txt",
+            "tts/kokoro-v1.0/model.onnx",
+            "tts/kokoro-v1.0/voices.bin",
         )
     }
 }

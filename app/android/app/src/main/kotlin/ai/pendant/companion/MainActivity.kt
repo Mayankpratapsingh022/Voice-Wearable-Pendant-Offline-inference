@@ -31,9 +31,20 @@ class MainActivity : FlutterActivity() {
                 PendantService.pair(this)
                 result.success(null)
             }
+            "provisionWifi" -> {
+                val ssid = call.argument<String>("ssid").orEmpty()
+                val password = call.argument<String>("password").orEmpty()
+                PendantService.provisionWifi(this, ssid, password)
+                result.success(null)
+            }
             "listNotes" -> {
                 val query = call.argument<String>("query").orEmpty()
                 result.success(EncryptedNoteStore(applicationContext).list(query).map(NoteRecord::toMap))
+            }
+            "modelStatus" -> result.success(ModelPack(applicationContext).status().toMap() + ModelDownloadManager.snapshot())
+            "downloadModels" -> {
+                ModelDownloadManager.start(applicationContext)
+                result.success(null)
             }
             else -> result.notImplemented()
         }

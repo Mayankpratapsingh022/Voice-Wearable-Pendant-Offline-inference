@@ -22,6 +22,12 @@ class PendantBridge {
 
   Future<void> startPairing() => _methods.invokeMethod<void>('startPairing');
 
+  Future<void> provisionWifi(String ssid, String password) =>
+      _methods.invokeMethod<void>('provisionWifi', <String, Object?>{
+        'ssid': ssid,
+        'password': password,
+      });
+
   Future<List<NoteSummary>> listNotes({String query = ''}) async {
     final result = await _methods.invokeListMethod<Map<Object?, Object?>>(
       'listNotes',
@@ -31,6 +37,16 @@ class PendantBridge {
         .map(NoteSummary.fromMap)
         .toList(growable: false);
   }
+
+  Future<ModelPackStatus> modelStatus() async {
+    final result = await _methods.invokeMapMethod<Object?, Object?>(
+      'modelStatus',
+    );
+    return ModelPackStatus.fromMap(result ?? const <Object?, Object?>{});
+  }
+
+  Future<void> downloadModels() =>
+      _methods.invokeMethod<void>('downloadModels');
 }
 
 class PendantController extends ChangeNotifier {
@@ -42,30 +58,59 @@ class PendantController extends ChangeNotifier {
   AssistantPhase phase = AssistantPhase.idle;
   String message = 'Start the companion service to pair your pendant.';
   List<NoteSummary> notes = const <NoteSummary>[];
+  ModelPackStatus? modelStatus;
+  List<ActivityLogEntry> activity = const <ActivityLogEntry>[];
 
   Future<void> initialize() async {
-    _subscription ??= _bridge.events.listen(_onEvent, onError: (Object error) {
-      message = 'Service error: $error';
-      phase = AssistantPhase.error;
-      notifyListeners();
-    });
+    _subscription ??= _bridge.events.listen(
+      _onEvent,
+      onError: (Object error) {
+        message = 'Service error: $error';
+        phase = AssistantPhase.error;
+        notifyListeners();
+      },
+    );
     await _bridge.requestBluetoothPermissions();
     await _bridge.start();
-    await refreshNotes();
+    await Future.wait(<Future<void>>[refreshNotes(), refreshModelStatus()]);
   }
 
   Future<void> pair() => _bridge.startPairing();
+
+  Future<void> provisionWifi(String ssid, String password) =>
+      _bridge.provisionWifi(ssid, password);
 
   Future<void> refreshNotes([String query = '']) async {
     notes = await _bridge.listNotes(query: query);
     notifyListeners();
   }
 
+  Future<void> refreshModelStatus() async {
+    modelStatus = await _bridge.modelStatus();
+    notifyListeners();
+  }
+
+  Future<void> downloadModels() async {
+    await _bridge.downloadModels();
+    await refreshModelStatus();
+  }
+
   void _onEvent(PendantEvent event) {
+    if (event.type == 'model') {
+      unawaited(refreshModelStatus());
+    }
     connection = event.connection ?? connection;
     phase = event.phase ?? phase;
     if (event.message.isNotEmpty) {
       message = event.message;
+      activity = <ActivityLogEntry>[
+        ActivityLogEntry(
+          at: DateTime.now(),
+          category: event.type,
+          message: event.message,
+        ),
+        ...activity,
+      ].take(30).toList(growable: false);
     }
     if (event.note != null) {
       notes = <NoteSummary>[event.note!, ...notes];

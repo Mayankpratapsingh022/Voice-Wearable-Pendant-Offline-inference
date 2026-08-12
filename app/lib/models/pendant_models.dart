@@ -1,6 +1,61 @@
 enum PendantConnection { pairing, disconnected, connecting, connected }
 
-enum AssistantPhase { idle, listening, transcribing, thinking, speaking, saved, error }
+class ModelPackStatus {
+  const ModelPackStatus({
+    required this.ready,
+    required this.missing,
+    required this.installedBytes,
+    required this.downloading,
+    required this.downloadMessage,
+    required this.downloadedBytes,
+    required this.totalBytes,
+  });
+
+  factory ModelPackStatus.fromMap(Map<Object?, Object?> map) {
+    final rawMissing = map['missing'];
+    return ModelPackStatus(
+      ready: map['ready'] == true,
+      missing: rawMissing is Iterable<Object?>
+          ? rawMissing.whereType<String>().toList(growable: false)
+          : const <String>[],
+      installedBytes: (map['installedBytes'] as num?)?.toInt() ?? 0,
+      downloading: map['downloading'] == true,
+      downloadMessage: map['downloadMessage'] as String? ?? '',
+      downloadedBytes: (map['downloadedBytes'] as num?)?.toInt() ?? 0,
+      totalBytes: (map['totalBytes'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  final bool ready;
+  final List<String> missing;
+  final int installedBytes;
+  final bool downloading;
+  final String downloadMessage;
+  final int downloadedBytes;
+  final int totalBytes;
+}
+
+enum AssistantPhase {
+  idle,
+  listening,
+  transcribing,
+  thinking,
+  speaking,
+  saved,
+  error,
+}
+
+class ActivityLogEntry {
+  const ActivityLogEntry({
+    required this.at,
+    required this.category,
+    required this.message,
+  });
+
+  final DateTime at;
+  final String category;
+  final String message;
+}
 
 class NoteSummary {
   const NoteSummary({
@@ -46,7 +101,10 @@ class PendantEvent {
       connection: connectionName == null
           ? null
           : PendantConnection.values.byName(connectionName),
-      phase: phaseName == null ? null : AssistantPhase.values.byName(phaseName),
+      // The service has a few informational/transitional phase names. Keep
+      // rendering its event stream even if a newer firmware sends one the UI
+      // does not yet model explicitly.
+      phase: _phaseOrNull(phaseName),
       note: map['note'] is Map<Object?, Object?>
           ? NoteSummary.fromMap(map['note'] as Map<Object?, Object?>)
           : null,
@@ -58,4 +116,12 @@ class PendantEvent {
   final PendantConnection? connection;
   final AssistantPhase? phase;
   final NoteSummary? note;
+}
+
+AssistantPhase? _phaseOrNull(String? name) {
+  if (name == null) return null;
+  for (final phase in AssistantPhase.values) {
+    if (phase.name == name) return phase;
+  }
+  return null;
 }

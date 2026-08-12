@@ -11,3 +11,5 @@
 *.gguf binary
 *.onnx binary
 *.safetensors binary
+*.riv binary
+*.eaf binary

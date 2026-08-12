@@ -74,6 +74,9 @@ static struct ble_gatt_chr_def voice_characteristics[] = {
     },
     {
         .uuid = &microphone_uuid.u,
+        // NimBLE requires an access callback even for a notify-only value.
+        // This callback rejects any client read/write attempt.
+        .access_cb = gatt_access,
         .flags = BLE_GATT_CHR_F_NOTIFY,
         .val_handle = &microphone_handle,
     },
@@ -85,6 +88,9 @@ static struct ble_gatt_chr_def voice_characteristics[] = {
     },
     {
         .uuid = &telemetry_uuid.u,
+        // NimBLE requires an access callback even for a notify-only value.
+        // This callback rejects any client read/write attempt.
+        .access_cb = gatt_access,
         .flags = BLE_GATT_CHR_F_NOTIFY,
         .val_handle = &telemetry_handle,
     },
@@ -185,7 +191,7 @@ static void nimble_host_task(void *param) {
     nimble_port_freertos_deinit();
 }
 
-esp_err_t ble_transport_init(void) {
+esp_err_t pendant_ble_init(void) {
     ESP_RETURN_ON_ERROR(nimble_port_init(), TAG, "NimBLE init failed");
     ble_svc_gap_init();
     ble_svc_gatt_init();
@@ -200,7 +206,7 @@ esp_err_t ble_transport_init(void) {
     rc = ble_gatts_add_svcs(voice_services);
     ESP_RETURN_ON_FALSE(rc == 0, ESP_FAIL, TAG, "GATT add failed: %d", rc);
     nimble_port_freertos_init(nimble_host_task);
-    app_state_set_face(APP_FACE_PAIRING, "Pair with phone");
+    app_state_set_face(APP_FACE_DISCONNECTED, "Phone not connected");
     return ESP_OK;
 }
 
