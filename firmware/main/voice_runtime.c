@@ -8,6 +8,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "face_ui.h"
 #include "wifi_transport.h"
 
 static const char *TAG = "voice_runtime";
@@ -19,11 +20,11 @@ static volatile bool meeting_active;
 #define CAPTURE_SOUND_GATE_US (260 * 1000)
 
 static bool phone_is_connected(void) {
-    return wifi_transport_is_connected() || ble_transport_is_connected();
+    return wifi_transport_is_connected();
 }
 
 static esp_err_t send_phone_packet(const voice_link_packet_t *packet) {
-    return wifi_transport_is_connected() ? wifi_transport_send(packet) : ble_transport_send(packet);
+    return wifi_transport_send(packet);
 }
 
 static void send_control(voice_control_opcode_t opcode, const char *message) {
@@ -97,8 +98,14 @@ esp_err_t voice_runtime_init(void) {
         .name = "capture_gate",
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &capture_start_timer), TAG, "capture timer init failed");
-    ESP_RETURN_ON_ERROR(pendant_ble_init(), TAG, "BLE init failed");
-    ESP_RETURN_ON_ERROR(wifi_transport_init(), TAG, "Wi-Fi init failed");
+    /* A radio allocation failure must never blank the display or disable
+     * BOOT/PWR. The user can still open the Wi-Fi QR screen and retry. */
+    /* Wi-Fi is the only pairing and voice transport.  Do not advertise BLE:
+     * Android must not show a Bluetooth pairing dialog for this pendant. */
+    const esp_err_t wifi_result = wifi_transport_init();
+    if (wifi_result != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi unavailable at boot: %s", esp_err_to_name(wifi_result));
+    }
     return ESP_OK;
 }
 
@@ -120,9 +127,16 @@ void voice_runtime_request_capture(bool enabled) {
 
 void voice_runtime_request_assistant(void) {
     const app_state_snapshot_t state = app_state_snapshot();
+    // On this board the PMIC can expose a stale PWR short-press status just
+    // after BOOT is released.  BOOT deliberately opens the QR radar, so never
+    // let that spurious PWR event immediately hide the pairing screen.
+    if (state.face == APP_FACE_PAIRING) {
+        ESP_LOGI(TAG, "PWR request: returning from QR to orbital screensaver");
+        voice_runtime_toggle_pairing_qr();
+        return;
+    }
     if (!phone_is_connected()) {
-        audio_engine_play_feedback(AUDIO_FEEDBACK_UNAVAILABLE);
-        app_state_set_face(APP_FACE_DISCONNECTED, "Phone not connected");
+        voice_runtime_toggle_pairing_qr();
         return;
     }
     if (meeting_active) {
@@ -141,6 +155,18 @@ void voice_runtime_request_assistant(void) {
     audio_engine_play_feedback(AUDIO_FEEDBACK_BUTTON);
     app_state_set_face(APP_FACE_THINKING, "Starting assistant");
     send_control(VOICE_CONTROL_ASSISTANT_REQUEST, NULL);
+}
+
+void voice_runtime_toggle_pairing_qr(void) {
+    const app_state_snapshot_t state = app_state_snapshot();
+    audio_engine_play_feedback(AUDIO_FEEDBACK_BUTTON);
+    // BOOT and the display can always expose the pairing identity. This keeps
+    // QR recovery possible when an old BLE link has not yet timed out.
+    if (state.face == APP_FACE_PAIRING) {
+        app_state_set_face(APP_FACE_DISCONNECTED, "Phone not connected");
+    } else {
+        app_state_set_face(APP_FACE_PAIRING, "Scan QR to link");
+    }
 }
 
 void voice_runtime_cancel_assistant(void) {
@@ -250,6 +276,27 @@ void voice_runtime_on_phone_packet(const voice_link_packet_t *packet) {
                                result == ESP_OK ? "Joining phone hotspot" : "Wi-Fi setup failed");
             break;
         }
+        case VOICE_CONTROL_VISUAL_PROFILE_SET:
+            if (packet->header.payload_size >= 2 && packet->header.payload_size <= 3 &&
+                packet->payload[1] <= FACE_UI_VISUAL_ORBITAL_STILL) {
+                const face_ui_visual_profile_t profile = (face_ui_visual_profile_t)packet->payload[1];
+                const bool phase_ok = packet->header.payload_size == 2 || face_ui_set_moon_phase(packet->payload[2]) == ESP_OK;
+                if (phase_ok && face_ui_set_visual_profile(profile) == ESP_OK) {
+                    uint8_t response[] = {VOICE_CONTROL_VISUAL_PROFILE, (uint8_t)profile, face_ui_moon_phase()};
+                    const voice_link_packet_t response_packet = {
+                        .header = {
+                            .version = VOICE_LINK_VERSION,
+                            .kind = VOICE_LINK_CONTROL,
+                            .sequence = outbound_sequence++,
+                            .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000),
+                            .payload_size = sizeof(response),
+                        },
+                        .payload = response,
+                    };
+                    send_phone_packet(&response_packet);
+                }
+            }
+            break;
         case VOICE_CONTROL_ASSISTANT_ACCEPTED:
             if (assistant_pending) {
                 audio_engine_play_feedback(AUDIO_FEEDBACK_ASK_ACCEPTED);

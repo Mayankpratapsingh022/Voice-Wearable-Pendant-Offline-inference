@@ -54,9 +54,21 @@ void app_state_set_mouth_level(uint8_t mouth_level) {
     portEXIT_CRITICAL(&state_lock);
 }
 
+void app_state_set_input_level(uint8_t input_level) {
+    portENTER_CRITICAL(&state_lock);
+    state.input_level = input_level;
+    portEXIT_CRITICAL(&state_lock);
+}
+
 void app_state_set_battery_percent(uint8_t battery_percent) {
     portENTER_CRITICAL(&state_lock);
     state.battery_percent = battery_percent > 100 ? 100 : battery_percent;
+    portEXIT_CRITICAL(&state_lock);
+}
+
+void app_state_set_pairing_uri(const char *uri) {
+    portENTER_CRITICAL(&state_lock);
+    strlcpy(state.pairing_uri, uri == NULL ? "" : uri, sizeof(state.pairing_uri));
     portEXIT_CRITICAL(&state_lock);
 }
 

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "bsp/esp-bsp.h"
+#include "app_state.h"
 #include "esp_check.h"
 #include "esp_codec_dev.h"
 #include "esp_log.h"
@@ -140,6 +141,16 @@ static void audio_task(void *arg) {
             // every microphone frame before it reached the BLE transport.
             const int read_result = esp_codec_dev_read(microphone, microphone_pcm, sizeof(microphone_pcm));
             if (read_result == ESP_CODEC_DEV_OK) {
+                // The visual layer intentionally receives only a smoothed
+                // envelope. Raw samples never leave this audio task except in
+                // their existing encrypted transport packet.
+                uint32_t absolute_sum = 0;
+                for (size_t index = 0; index < MIC_FRAME_SAMPLES; ++index) {
+                    const int32_t sample = microphone_pcm[index];
+                    absolute_sum += (uint32_t)(sample < 0 ? -sample : sample);
+                }
+                const uint32_t mean = absolute_sum / MIC_FRAME_SAMPLES;
+                app_state_set_input_level((uint8_t)((mean * 255U) / 9000U > 255U ? 255U : (mean * 255U) / 9000U));
                 const int encoded = opus_encode(mic_encoder, microphone_pcm, MIC_FRAME_SAMPLES, opus_buffer, sizeof(opus_buffer));
                 if (encoded > 0) {
                     voice_runtime_on_mic_opus(opus_buffer, (size_t)encoded, (uint32_t)(esp_timer_get_time() / 1000));
@@ -200,6 +211,7 @@ esp_err_t audio_engine_start_capture(void) {
 
 void audio_engine_stop_capture(void) {
     capture_active = false;
+    app_state_set_input_level(0);
     if (microphone_open) {
         esp_codec_dev_close(microphone);
         microphone_open = false;

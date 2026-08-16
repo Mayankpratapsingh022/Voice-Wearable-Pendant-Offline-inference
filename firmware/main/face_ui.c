@@ -7,9 +7,12 @@
 #include "app_state.h"
 #include "bsp/esp32_s3_touch_amoled_1_75c.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mmap_assets.h"
+#include "nvs.h"
 #include "lvgl.h"
+#include "src/libs/qrcode/lv_qrcode.h"
 #include "voice_runtime.h"
 
 static const char *TAG = "moon_ui";
@@ -20,10 +23,14 @@ static const char *TAG = "moon_ui";
 #define GRID_ROWS 58
 #define FRAME_INTERVAL_MS 33
 #define MOON_FRAME_INTERVAL_MS 200
-#define ORBIT_FRAME_INTERVAL_MS 66
+#define ORBIT_FRAME_INTERVAL_MS 67
 #define ORBIT_FRAME_COUNT 38
+#define ORBIT_PALETTE_SIZE (256 * 4)
+#define ORBIT_STRAND_COUNT 22
+#define ORBIT_POINTS_PER_STRAND 72
 #define CONNECTED_TICK_DURATION_MS 1100
 #define LOOP_DURATION_MS 3500
+#define RADAR_LOOP_DURATION_MS 4200
 #define PI_F 3.14159265f
 #define CRESCENT_ENDPOINT_RAD .95f
 
@@ -76,27 +83,69 @@ static const crater_t craters[] = {
 
 static lv_obj_t *glyph_field;
 static lv_obj_t *orbit_image;
+static lv_obj_t *orbital_lines[ORBIT_STRAND_COUNT];
+static lv_point_precise_t orbital_points[ORBIT_STRAND_COUNT][ORBIT_POINTS_PER_STRAND];
 static lv_obj_t *radar_rings[3];
-static lv_obj_t *radar_sweep;
-static lv_obj_t *radar_blip;
+static lv_obj_t *radar_beam;
 static lv_obj_t *radar_center;
+static lv_obj_t *pair_qr;
+static lv_obj_t *pair_caption;
+static lv_obj_t *pair_touch_target;
 static lv_obj_t *connected_tick;
 static mmap_assets_handle_t orbit_assets;
 static lv_image_dsc_t orbit_frame_dsc[ORBIT_FRAME_COUNT];
+static lv_image_dsc_t orbit_render_dsc;
+static uint16_t *orbit_render_pixels;
 static char glyph_buffer[GLYPH_BUFFER_SIZE];
-static bool capture_requested;
 static bool processing_visible;
-static bool processing_dismissed;
-static bool processing_loop_requested;
 static bool pairing_visible;
 static bool tick_visible;
 static bool connection_was_active;
+static face_ui_visual_profile_t visual_profile = FACE_UI_VISUAL_ORBITAL_LOOP;
+static uint8_t moon_phase = 100;
+static float visual_energy;
+static bool orbital_lines_visible;
 static uint32_t tick_ms;
 static uint32_t last_moon_render_ms;
 static uint32_t last_orbit_frame_ms;
 static uint32_t orbit_frame_index;
 static uint32_t connected_tick_until_ms;
+static char rendered_pairing_uri[48];
 static const lv_point_precise_t connected_tick_points[] = {{142, 244}, {205, 306}, {332, 156}};
+static const lv_point_precise_t radar_beam_points[] = {{233, 233}, {233, 55}};
+
+static void set_orbital_lines_visible(bool visible) {
+    if (orbital_lines_visible == visible) {
+        return;
+    }
+    orbital_lines_visible = visible;
+    for (uint32_t strand = 0; strand < ORBIT_STRAND_COUNT; ++strand) {
+        if (visible) {
+            lv_obj_clear_flag(orbital_lines[strand], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(orbital_lines[strand], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+static esp_err_t render_orbit_pixels(uint32_t index) {
+    ESP_RETURN_ON_FALSE(orbit_render_pixels != NULL && index < ORBIT_FRAME_COUNT,
+                        ESP_ERR_INVALID_STATE, TAG, "orbital render buffer unavailable");
+    // I8 assets start with a 256-entry BGRA palette. Their pixel indices are
+    // source luminance; copying that into a native RGB565 canvas avoids the
+    // alpha/indexed decoder paths that produce a solid green/white fill on
+    // this AMOLED driver.
+    const uint8_t *source = orbit_frame_dsc[index].data + ORBIT_PALETTE_SIZE;
+    const size_t pixel_count = DISPLAY_SIZE * DISPLAY_SIZE;
+    for (size_t pixel = 0; pixel < pixel_count; ++pixel) {
+        const uint8_t level = source[pixel];
+        orbit_render_pixels[pixel] = (uint16_t)(((uint16_t)(level >> 3) << 11) |
+                                                ((uint16_t)(level >> 2) << 5) |
+                                                (level >> 3));
+    }
+    lv_obj_invalidate(orbit_image);
+    return ESP_OK;
+}
 
 static esp_err_t init_orbit_frames(void) {
     const mmap_assets_config_t config = {
@@ -119,8 +168,8 @@ static esp_err_t init_orbit_frames(void) {
         const uint8_t *data = mmap_assets_get_mem(orbit_assets, index);
         const int data_size = mmap_assets_get_size(orbit_assets, index);
         const lv_image_header_t *header = (const lv_image_header_t *)data;
-        if (data == NULL || data_size != (int)(sizeof(lv_image_header_t) + DISPLAY_SIZE * DISPLAY_SIZE) ||
-            header->magic != LV_IMAGE_HEADER_MAGIC || header->cf != LV_COLOR_FORMAT_A8 ||
+        if (data == NULL || data_size != (int)(sizeof(lv_image_header_t) + ORBIT_PALETTE_SIZE + DISPLAY_SIZE * DISPLAY_SIZE) ||
+            header->magic != LV_IMAGE_HEADER_MAGIC || header->cf != LV_COLOR_FORMAT_I8 ||
             header->w != DISPLAY_SIZE || header->h != DISPLAY_SIZE) {
             ESP_LOGE(TAG, "invalid orbital frame %" PRIu32, index);
             return ESP_ERR_INVALID_SIZE;
@@ -224,10 +273,7 @@ static void render_ascii_moon(float theta) {
 }
 
 static bool should_show_processing(const app_state_snapshot_t *state) {
-    if (processing_dismissed) {
-        return false;
-    }
-    return processing_loop_requested || state->face == APP_FACE_LISTENING || state->face == APP_FACE_TRANSCRIBING ||
+    return state->face == APP_FACE_LISTENING || state->face == APP_FACE_TRANSCRIBING ||
            state->face == APP_FACE_THINKING || state->face == APP_FACE_SPEAKING;
 }
 
@@ -237,8 +283,13 @@ static void set_processing_visible(bool visible) {
     }
     processing_visible = visible;
     if (visible) {
-        orbit_frame_index = 0;
         last_orbit_frame_ms = tick_ms - ORBIT_FRAME_INTERVAL_MS;
+    }
+    // Use the approved orbital-frame sequence rather than the fallback line
+    // geometry. RGB565 is safe on this AMOLED driver; indexed source frames
+    // were the cause of the earlier green/white corruption.
+    set_orbital_lines_visible(false);
+    if (visible) {
         lv_obj_clear_flag(orbit_image, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(orbit_image, LV_OBJ_FLAG_HIDDEN);
@@ -258,13 +309,43 @@ static void set_pairing_visible(bool visible) {
         }
     }
     if (visible) {
-        lv_obj_clear_flag(radar_sweep, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(radar_blip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(radar_beam, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(radar_center, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(pair_qr, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(pair_caption, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(radar_sweep, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(radar_blip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(radar_beam, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(radar_center, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(pair_qr, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(pair_caption, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void update_pairing_qr(const app_state_snapshot_t *state) {
+    const char *uri = state->pairing_uri[0] == '\0' ? "PENDANT:V1:DISCOVER" : state->pairing_uri;
+    if (strcmp(uri, rendered_pairing_uri) == 0) return;
+    const lv_result_t result = lv_qrcode_update(pair_qr, uri, strlen(uri));
+    if (result == LV_RESULT_OK) {
+        strlcpy(rendered_pairing_uri, uri, sizeof(rendered_pairing_uri));
+        ESP_LOGI(TAG, "pair QR rendered: %s", uri);
+    } else {
+        ESP_LOGE(TAG, "pair QR render failed: %d", result);
+    }
+}
+
+static void on_pairing_touch(lv_event_t *event) {
+    const lv_event_code_t code = lv_event_get_code(event);
+    const app_state_snapshot_t state = app_state_snapshot();
+    if (code == LV_EVENT_PRESSED) {
+        ESP_LOGI(TAG, "display touch detected (connected=%d face=%d)", state.connected, state.face);
+        return;
+    }
+    // The display itself is the reliable QR entry point. It deliberately does
+    // not begin a capture, and remains available even if an old BLE link has
+    // left the generic connection state true.
+    if (code == LV_EVENT_CLICKED) {
+        ESP_LOGI(TAG, "display tap: toggling pairing QR");
+        voice_runtime_toggle_pairing_qr();
     }
 }
 
@@ -281,21 +362,28 @@ static void set_connected_tick_visible(bool visible) {
 }
 
 static void update_radar(void) {
-    const float progress = (float)(tick_ms % 2600U) / 2600.0f;
-    const float angle = progress * 2.0f * PI_F;
-    const int32_t center = DISPLAY_SIZE / 2;
-    const int32_t radius = 148 + (int32_t)(sinf(angle * 3.0f) * 7.0f);
-    lv_arc_set_rotation(radar_sweep, (int32_t)(progress * 360.0f));
-    lv_obj_set_pos(radar_blip, center + (int32_t)(cosf(angle) * radius) - 7,
-                   center + (int32_t)(sinf(angle) * radius) - 7);
+    // One unbroken, slow revolution reads as a radar sweep. At 30fps this is
+    // only 2.8° per frame, so the line no longer looks like a travelling arc.
+    const float progress = (float)(tick_ms % RADAR_LOOP_DURATION_MS) / RADAR_LOOP_DURATION_MS;
+    lv_obj_set_style_transform_rotation(radar_beam, (int32_t)(progress * 3600.0f), 0);
 }
 
 static void render_orbit_frame(void) {
-    if ((uint32_t)(tick_ms - last_orbit_frame_ms) < ORBIT_FRAME_INTERVAL_MS) {
+    const app_state_snapshot_t state = app_state_snapshot();
+    const bool active_voice = state.face == APP_FACE_LISTENING || state.face == APP_FACE_SPEAKING;
+    const uint8_t source_level = state.face == APP_FACE_LISTENING ? state.input_level : state.mouth_level;
+    const float target = active_voice ? (float)source_level / 255.0f : 0.0f;
+    // Fast attack lets a spoken syllable feel connected to the strands while
+    // the slower release prevents harsh flicker in the original artwork.
+    visual_energy += (target - visual_energy) * (target > visual_energy ? .42f : .10f);
+    const uint32_t interval = active_voice
+                                  ? (uint32_t)(ORBIT_FRAME_INTERVAL_MS - visual_energy * 18.0f)
+                                  : ORBIT_FRAME_INTERVAL_MS;
+    if ((uint32_t)(tick_ms - last_orbit_frame_ms) < interval) {
         return;
     }
     last_orbit_frame_ms = tick_ms;
-    lv_image_set_src(orbit_image, &orbit_frame_dsc[orbit_frame_index]);
+    ESP_ERROR_CHECK_WITHOUT_ABORT(render_orbit_pixels(orbit_frame_index));
     orbit_frame_index = (orbit_frame_index + 1) % ORBIT_FRAME_COUNT;
 }
 
@@ -303,71 +391,61 @@ static void update_moon(lv_timer_t *timer) {
     (void)timer;
     tick_ms += FRAME_INTERVAL_MS;
     const app_state_snapshot_t state = app_state_snapshot();
-    if (state.face == APP_FACE_IDLE || state.face == APP_FACE_DISCONNECTED || state.face == APP_FACE_PAIRING) {
-        processing_dismissed = false;
-    }
     if (state.connected && !connection_was_active) {
         connected_tick_until_ms = tick_ms + CONNECTED_TICK_DURATION_MS;
     }
     connection_was_active = state.connected;
 
     const bool show_tick = state.connected && tick_ms < connected_tick_until_ms;
-    // Radar is reserved for the explicit pairing flow.  A merely disconnected
-    // device still keeps its moon/orbital tap experience.
     const bool show_pairing = state.face == APP_FACE_PAIRING;
-    const bool show_processing = !show_tick && !show_pairing && should_show_processing(&state);
-    set_processing_visible(show_processing);
+    // The orbital waveform is now the only normal face. Moon remains out of
+    // the render path until it is intentionally brought back in a later UI.
+    const bool show_orbit = !show_tick && !show_pairing;
+    set_processing_visible(show_orbit);
     set_pairing_visible(show_pairing);
     set_connected_tick_visible(show_tick);
-    if (show_tick || show_pairing || show_processing) {
+    if (show_tick || show_pairing || show_orbit) {
         lv_obj_add_flag(glyph_field, LV_OBJ_FLAG_HIDDEN);
         if (show_pairing) {
+            update_pairing_qr(&state);
             update_radar();
-        } else if (show_processing) {
+        } else if (show_orbit) {
             render_orbit_frame();
         }
         return;
     }
-    lv_obj_clear_flag(glyph_field, LV_OBJ_FLAG_HIDDEN);
-    if ((uint32_t)(tick_ms - last_moon_render_ms) < MOON_FRAME_INTERVAL_MS) {
-        return;
-    }
-    last_moon_render_ms = tick_ms;
-    const float progress = (float)(tick_ms % LOOP_DURATION_MS) / LOOP_DURATION_MS;
-    // Keep the loop in the readable crescent-to-full range. A sine orbit is
-    // seamless at the reset point and never holds a fully black new moon.
-    const float theta = PI_F + (PI_F - CRESCENT_ENDPOINT_RAD) * sinf(progress * PI_F * 2.0f);
-    render_ascii_moon(theta);
 }
 
-static void on_moon_touch(lv_event_t *event) {
-    const lv_event_code_t code = lv_event_get_code(event);
-    const app_state_snapshot_t state = app_state_snapshot();
-    if (code == LV_EVENT_PRESSED) {
-        if (should_show_processing(&state)) {
-            // A second tap is an immediate visual escape back to the moon.
-            processing_loop_requested = false;
-            processing_dismissed = true;
-            if (capture_requested) {
-                capture_requested = false;
-                voice_runtime_request_capture(false);
-            }
-            ESP_LOGI(TAG, "touch: return to moon");
-            return;
-        }
-        // One tap enters the rendered orbital loop.  It intentionally stays
-        // there after a voice request ends; only the next tap returns to moon.
-        processing_dismissed = false;
-        processing_loop_requested = true;
-        ESP_LOGI(TAG, "touch: orbital loop");
-        if (state.connected && !capture_requested) {
-            capture_requested = true;
-            voice_runtime_request_capture(true);
-        }
-    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && capture_requested) {
-        capture_requested = false;
-        voice_runtime_request_capture(false);
-    }
+face_ui_visual_profile_t face_ui_visual_profile(void) {
+    return visual_profile;
+}
+
+esp_err_t face_ui_set_visual_profile(face_ui_visual_profile_t profile) {
+    if (profile > FACE_UI_VISUAL_ORBITAL_STILL) return ESP_ERR_INVALID_ARG;
+    visual_profile = profile;
+    nvs_handle_t handle;
+    const esp_err_t open_result = nvs_open("visual", NVS_READWRITE, &handle);
+    if (open_result != ESP_OK) return open_result;
+    const esp_err_t set_result = nvs_set_u8(handle, "profile", (uint8_t)profile);
+    const esp_err_t commit_result = set_result == ESP_OK ? nvs_commit(handle) : set_result;
+    nvs_close(handle);
+    return commit_result;
+}
+
+uint8_t face_ui_moon_phase(void) {
+    return moon_phase;
+}
+
+esp_err_t face_ui_set_moon_phase(uint8_t phase) {
+    if (phase > 100) return ESP_ERR_INVALID_ARG;
+    moon_phase = phase;
+    nvs_handle_t handle;
+    const esp_err_t open_result = nvs_open("visual", NVS_READWRITE, &handle);
+    if (open_result != ESP_OK) return open_result;
+    const esp_err_t set_result = nvs_set_u8(handle, "moon_phase", phase);
+    const esp_err_t commit_result = set_result == ESP_OK ? nvs_commit(handle) : set_result;
+    nvs_close(handle);
+    return commit_result;
 }
 
 esp_err_t face_ui_init(void) {
@@ -391,16 +469,36 @@ esp_err_t face_ui_init(void) {
     lv_label_set_long_mode(glyph_field, LV_LABEL_LONG_CLIP);
     lv_label_set_text_static(glyph_field, glyph_buffer);
 
-    ESP_RETURN_ON_ERROR(init_orbit_frames(), TAG, "orbital frames unavailable");
     orbit_image = lv_image_create(screen);
-    lv_image_set_src(orbit_image, &orbit_frame_dsc[0]);
     lv_obj_set_size(orbit_image, DISPLAY_SIZE, DISPLAY_SIZE);
     lv_obj_set_pos(orbit_image, 0, 0);
-    lv_obj_set_style_image_recolor(orbit_image, lv_color_white(), 0);
-    lv_obj_set_style_image_recolor_opa(orbit_image, LV_OPA_COVER, 0);
+    lv_obj_set_style_image_recolor_opa(orbit_image, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(orbit_image, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(orbit_image, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(orbit_image, LV_OBJ_FLAG_HIDDEN);
+    ESP_RETURN_ON_ERROR(init_orbit_frames(), TAG, "orbital frames unavailable");
+    orbit_render_pixels = heap_caps_malloc(DISPLAY_SIZE * DISPLAY_SIZE * sizeof(uint16_t),
+                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_RETURN_ON_FALSE(orbit_render_pixels != NULL, ESP_ERR_NO_MEM, TAG, "orbital render buffer unavailable");
+    memset(&orbit_render_dsc, 0, sizeof(orbit_render_dsc));
+    orbit_render_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    orbit_render_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    orbit_render_dsc.header.w = DISPLAY_SIZE;
+    orbit_render_dsc.header.h = DISPLAY_SIZE;
+    orbit_render_dsc.data_size = DISPLAY_SIZE * DISPLAY_SIZE * sizeof(uint16_t);
+    orbit_render_dsc.data = (const uint8_t *)orbit_render_pixels;
+    lv_image_set_src(orbit_image, &orbit_render_dsc);
+
+    for (uint32_t strand = 0; strand < ORBIT_STRAND_COUNT; ++strand) {
+        orbital_lines[strand] = lv_line_create(screen);
+        lv_obj_set_size(orbital_lines[strand], DISPLAY_SIZE, DISPLAY_SIZE);
+        lv_obj_set_pos(orbital_lines[strand], 0, 0);
+        lv_obj_set_style_line_color(orbital_lines[strand], lv_color_hex(0xe9efff), 0);
+        lv_obj_set_style_line_width(orbital_lines[strand], strand % 7 == 0 ? 2 : 1, 0);
+        lv_obj_set_style_line_rounded(orbital_lines[strand], true, 0);
+        lv_obj_clear_flag(orbital_lines[strand], LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(orbital_lines[strand], LV_OBJ_FLAG_HIDDEN);
+    }
 
     const int32_t radar_sizes[] = {330, 230, 130};
     for (uint32_t index = 0; index < 3; ++index) {
@@ -409,34 +507,27 @@ esp_err_t face_ui_init(void) {
         lv_obj_center(radar_rings[index]);
         lv_obj_set_style_bg_opa(radar_rings[index], LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_color(radar_rings[index], lv_color_hex(RADAR_GREEN_DIM), 0);
-        lv_obj_set_style_border_width(radar_rings[index], index == 0 ? 2 : 1, 0);
+        lv_obj_set_style_border_width(radar_rings[index], index == 0 ? 4 : 3, 0);
         lv_obj_set_style_radius(radar_rings[index], LV_RADIUS_CIRCLE, 0);
         lv_obj_clear_flag(radar_rings[index], LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(radar_rings[index], LV_OBJ_FLAG_HIDDEN);
     }
 
-    radar_sweep = lv_arc_create(screen);
-    lv_obj_set_size(radar_sweep, 330, 330);
-    lv_obj_center(radar_sweep);
-    lv_arc_set_range(radar_sweep, 0, 100);
-    lv_arc_set_value(radar_sweep, 19);
-    lv_arc_set_bg_angles(radar_sweep, 0, 360);
-    lv_obj_set_style_arc_opa(radar_sweep, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(radar_sweep, lv_color_hex(RADAR_GREEN), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(radar_sweep, 6, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(radar_sweep, true, LV_PART_INDICATOR);
-    lv_obj_clear_flag(radar_sweep, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(radar_sweep, LV_OBJ_FLAG_HIDDEN);
-
-    radar_blip = lv_obj_create(screen);
-    lv_obj_set_size(radar_blip, 14, 14);
-    lv_obj_set_style_radius(radar_blip, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(radar_blip, lv_color_hex(RADAR_GREEN), 0);
-    lv_obj_set_style_shadow_color(radar_blip, lv_color_hex(RADAR_GREEN), 0);
-    lv_obj_set_style_shadow_width(radar_blip, 18, 0);
-    lv_obj_set_style_shadow_opa(radar_blip, LV_OPA_70, 0);
-    lv_obj_clear_flag(radar_blip, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(radar_blip, LV_OBJ_FLAG_HIDDEN);
+    radar_beam = lv_line_create(screen);
+    lv_line_set_points(radar_beam, radar_beam_points, 2);
+    lv_obj_set_size(radar_beam, DISPLAY_SIZE, DISPLAY_SIZE);
+    lv_obj_set_pos(radar_beam, 0, 0);
+    lv_obj_set_style_line_color(radar_beam, lv_color_hex(RADAR_GREEN), 0);
+    lv_obj_set_style_line_width(radar_beam, 3, 0);
+    lv_obj_set_style_line_rounded(radar_beam, true, 0);
+    lv_obj_set_style_line_opa(radar_beam, LV_OPA_80, 0);
+    lv_obj_set_style_shadow_color(radar_beam, lv_color_hex(RADAR_GREEN), 0);
+    lv_obj_set_style_shadow_width(radar_beam, 18, 0);
+    lv_obj_set_style_shadow_opa(radar_beam, LV_OPA_60, 0);
+    lv_obj_set_style_transform_pivot_x(radar_beam, DISPLAY_SIZE / 2, 0);
+    lv_obj_set_style_transform_pivot_y(radar_beam, DISPLAY_SIZE / 2, 0);
+    lv_obj_clear_flag(radar_beam, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(radar_beam, LV_OBJ_FLAG_HIDDEN);
 
     radar_center = lv_obj_create(screen);
     lv_obj_set_size(radar_center, 16, 16);
@@ -448,6 +539,41 @@ esp_err_t face_ui_init(void) {
     lv_obj_set_style_shadow_opa(radar_center, LV_OPA_60, 0);
     lv_obj_clear_flag(radar_center, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(radar_center, LV_OBJ_FLAG_HIDDEN);
+
+    pair_qr = lv_qrcode_create(screen);
+    // Large modules plus a quiet zone are essential for a phone camera at
+    // normal pendant distance; 128px was too small to focus reliably.
+    lv_qrcode_set_size(pair_qr, 190);
+    lv_qrcode_set_dark_color(pair_qr, lv_color_hex(0x050507));
+    lv_qrcode_set_light_color(pair_qr, lv_color_hex(0xf2fff7));
+    lv_qrcode_set_quiet_zone(pair_qr, true);
+    lv_obj_center(pair_qr);
+    lv_obj_clear_flag(pair_qr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pair_qr, LV_OBJ_FLAG_HIDDEN);
+
+    pair_caption = lv_label_create(screen);
+    lv_label_set_text(pair_caption, "SCAN TO LINK");
+    lv_obj_set_style_text_color(pair_caption, lv_color_hex(RADAR_GREEN), 0);
+    lv_obj_set_style_text_font(pair_caption, &lv_font_montserrat_12, 0);
+    lv_obj_align(pair_caption, LV_ALIGN_CENTER, 0, 126);
+    lv_obj_clear_flag(pair_caption, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pair_caption, LV_OBJ_FLAG_HIDDEN);
+
+    // Full-screen transparent fallback for board revisions whose PWR key is
+    // unavailable. A user tap exposes the QR radar; the next tap restores the
+    // moon. It intercepts no connected-state interaction.
+    pair_touch_target = lv_obj_create(screen);
+    lv_obj_set_size(pair_touch_target, DISPLAY_SIZE, DISPLAY_SIZE);
+    lv_obj_set_pos(pair_touch_target, 0, 0);
+    lv_obj_set_style_bg_opa(pair_touch_target, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(pair_touch_target, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(pair_touch_target, 0, 0);
+    // Do not rely on LVGL's object-default flags: this is the physical
+    // interaction surface for pairing and must always receive touch events.
+    lv_obj_add_flag(pair_touch_target, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(pair_touch_target, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(pair_touch_target, on_pairing_touch, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(pair_touch_target, on_pairing_touch, LV_EVENT_CLICKED, NULL);
 
     connected_tick = lv_line_create(screen);
     lv_line_set_points(connected_tick, connected_tick_points, 3);
@@ -461,19 +587,40 @@ esp_err_t face_ui_init(void) {
     lv_obj_clear_flag(connected_tick, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(connected_tick, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *touch_target = lv_obj_create(screen);
-    lv_obj_set_size(touch_target, DISPLAY_SIZE, DISPLAY_SIZE);
-    lv_obj_set_pos(touch_target, 0, 0);
-    lv_obj_set_style_bg_opa(touch_target, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(touch_target, 0, 0);
-    lv_obj_set_style_pad_all(touch_target, 0, 0);
-    lv_obj_add_flag(touch_target, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(touch_target, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(touch_target, on_moon_touch, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(touch_target, on_moon_touch, LV_EVENT_RELEASED, NULL);
-    lv_obj_add_event_cb(touch_target, on_moon_touch, LV_EVENT_PRESS_LOST, NULL);
+    nvs_handle_t visual_handle;
+    if (nvs_open("visual", NVS_READONLY, &visual_handle) == ESP_OK) {
+        uint8_t stored_profile = FACE_UI_VISUAL_ORBITAL_LOOP;
+        if (nvs_get_u8(visual_handle, "profile", &stored_profile) == ESP_OK &&
+            stored_profile <= FACE_UI_VISUAL_ORBITAL_STILL) {
+            visual_profile = (face_ui_visual_profile_t)stored_profile;
+        }
+        uint8_t stored_phase = moon_phase;
+        if (nvs_get_u8(visual_handle, "moon_phase", &stored_phase) == ESP_OK && stored_phase <= 100) {
+            moon_phase = stored_phase;
+        }
+        nvs_close(visual_handle);
+    }
 
-    render_ascii_moon(PI_F);
+    // The default screensaver is the approved orbital loop. Moon loop/still
+    // remain selectable from the companion and keep their settings after the
+    // migration.
+    nvs_handle_t migration_handle;
+    if (nvs_open("visual", NVS_READWRITE, &migration_handle) == ESP_OK) {
+        uint8_t migrated = 0;
+        nvs_get_u8(migration_handle, "orbital_v3", &migrated);
+        if (migrated == 0 && (visual_profile == FACE_UI_VISUAL_MOON_LOOP ||
+                              visual_profile == FACE_UI_VISUAL_ORBITAL_STILL)) {
+            visual_profile = FACE_UI_VISUAL_ORBITAL_LOOP;
+            nvs_set_u8(migration_handle, "profile", (uint8_t)visual_profile);
+            ESP_LOGI(TAG, "migrated default screensaver to orbital loop");
+        }
+        nvs_set_u8(migration_handle, "orbital_v3", 1);
+        nvs_commit(migration_handle);
+        nvs_close(migration_handle);
+    }
+
+    last_orbit_frame_ms = tick_ms - ORBIT_FRAME_INTERVAL_MS;
+    render_orbit_frame();
     lv_timer_create(update_moon, FRAME_INTERVAL_MS, NULL);
     bsp_display_unlock();
     ESP_LOGI(TAG, "ASCII lunar phase loop + rendered orbital strands ready");

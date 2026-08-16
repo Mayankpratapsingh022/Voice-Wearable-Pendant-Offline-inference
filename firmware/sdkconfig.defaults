@@ -29,7 +29,11 @@ CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_DEF_REFR_PERIOD=15
-CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+# The QSPI panel receives 50-row LVGL tiles.  A deep queue makes the ESP-IDF
+# SPI driver reserve a full DMA bounce buffer for each pending tile; on this
+# board that exhausts internal DMA RAM and stalls both drawing and input.
+CONFIG_BSP_LCD_TRANS_QUEUE_DEPTH=2
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_12=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
@@ -37,3 +41,10 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_UNSCII_8=y
 CONFIG_LV_USE_PERF_MONITOR=y
 CONFIG_LV_USE_GIF=y
+CONFIG_LV_USE_QRCODE=y
+
+# Reserve RAM for the OLED's internal DMA tile. Dynamic Wi-Fi buffers can use
+# PSRAM; the small static pool is enough for the pendant's single TCP client.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=12

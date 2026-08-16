@@ -10,6 +10,7 @@
 esp_err_t voice_runtime_init(void);
 void voice_runtime_request_capture(bool enabled);
 void voice_runtime_request_assistant(void);
+void voice_runtime_toggle_pairing_qr(void);
 void voice_runtime_cancel_assistant(void);
 void voice_runtime_request_meeting_toggle(void);
 void voice_runtime_on_phone_packet(const voice_link_packet_t *packet);

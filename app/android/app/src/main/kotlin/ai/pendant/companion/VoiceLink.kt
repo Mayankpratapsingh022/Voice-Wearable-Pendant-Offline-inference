@@ -30,6 +30,8 @@ object VoiceLink {
     const val WIFI_PROVISION: Byte = 0x0f
     const val WIFI_READY: Byte = 0x10
     const val WIFI_FAILED: Byte = 0x11
+    const val VISUAL_PROFILE_SET: Byte = 0x12
+    const val VISUAL_PROFILE: Byte = 0x13
 
     data class Packet(
         val kind: Byte,

@@ -22,6 +22,11 @@ class PendantBridge {
 
   Future<void> startPairing() => _methods.invokeMethod<void>('startPairing');
 
+  Future<void> pairFromQr(String code) => _methods.invokeMethod<void>(
+    'pairFromQr',
+    <String, Object?>{'code': code},
+  );
+
   Future<void> provisionWifi(String ssid, String password) =>
       _methods.invokeMethod<void>('provisionWifi', <String, Object?>{
         'ssid': ssid,
@@ -47,6 +52,35 @@ class PendantBridge {
 
   Future<void> downloadModels() =>
       _methods.invokeMethod<void>('downloadModels');
+
+  Future<CloudVoiceSettings> cloudSettings() async {
+    final result = await _methods.invokeMapMethod<Object?, Object?>(
+      'cloudSettings',
+    );
+    return CloudVoiceSettings.fromMap(result ?? const <Object?, Object?>{});
+  }
+
+  Future<CloudVoiceSettings> saveCloudSettings({
+    required String mode,
+    required String voice,
+    String? apiKey,
+  }) async {
+    final result = await _methods.invokeMapMethod<Object?, Object?>(
+      'saveCloudSettings',
+      <String, Object?>{
+        'mode': mode,
+        'voice': voice,
+        if (apiKey != null) 'apiKey': apiKey,
+      },
+    );
+    return CloudVoiceSettings.fromMap(result ?? const <Object?, Object?>{});
+  }
+
+  Future<void> setVisualProfile(VisualProfile profile, int moonPhase) =>
+      _methods.invokeMethod<void>('setVisualProfile', <String, Object?>{
+        'profile': profile.wireValue,
+        'moonPhase': moonPhase,
+      });
 }
 
 class PendantController extends ChangeNotifier {
@@ -59,6 +93,9 @@ class PendantController extends ChangeNotifier {
   String message = 'Start the companion service to pair your pendant.';
   List<NoteSummary> notes = const <NoteSummary>[];
   ModelPackStatus? modelStatus;
+  CloudVoiceSettings? cloudSettings;
+  VisualProfile visualProfile = VisualProfile.moonLoop;
+  int moonPhase = 100;
   List<ActivityLogEntry> activity = const <ActivityLogEntry>[];
 
   Future<void> initialize() async {
@@ -72,10 +109,16 @@ class PendantController extends ChangeNotifier {
     );
     await _bridge.requestBluetoothPermissions();
     await _bridge.start();
-    await Future.wait(<Future<void>>[refreshNotes(), refreshModelStatus()]);
+    await Future.wait(<Future<void>>[
+      refreshNotes(),
+      refreshModelStatus(),
+      refreshCloudSettings(),
+    ]);
   }
 
   Future<void> pair() => _bridge.startPairing();
+
+  Future<void> pairFromQr(String code) => _bridge.pairFromQr(code);
 
   Future<void> provisionWifi(String ssid, String password) =>
       _bridge.provisionWifi(ssid, password);
@@ -93,6 +136,34 @@ class PendantController extends ChangeNotifier {
   Future<void> downloadModels() async {
     await _bridge.downloadModels();
     await refreshModelStatus();
+  }
+
+  Future<void> refreshCloudSettings() async {
+    cloudSettings = await _bridge.cloudSettings();
+    visualProfile = cloudSettings!.visualProfile;
+    moonPhase = cloudSettings!.moonPhase;
+    notifyListeners();
+  }
+
+  Future<void> saveCloudSettings({
+    required String mode,
+    required String voice,
+    String? apiKey,
+  }) async {
+    cloudSettings = await _bridge.saveCloudSettings(
+      mode: mode,
+      voice: voice,
+      apiKey: apiKey,
+    );
+    visualProfile = cloudSettings!.visualProfile;
+    notifyListeners();
+  }
+
+  Future<void> setVisualProfile(VisualProfile profile, {int? moonPhase}) async {
+    visualProfile = profile;
+    if (moonPhase != null) this.moonPhase = moonPhase;
+    notifyListeners();
+    await _bridge.setVisualProfile(profile, this.moonPhase);
   }
 
   void _onEvent(PendantEvent event) {
@@ -115,6 +186,8 @@ class PendantController extends ChangeNotifier {
     if (event.note != null) {
       notes = <NoteSummary>[event.note!, ...notes];
     }
+    if (event.visualProfile != null) visualProfile = event.visualProfile!;
+    if (event.moonPhase != null) moonPhase = event.moonPhase!;
     notifyListeners();
   }
 

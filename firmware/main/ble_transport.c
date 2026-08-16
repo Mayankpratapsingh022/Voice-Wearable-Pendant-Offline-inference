@@ -1,5 +1,6 @@
 #include "ble_transport.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "app_state.h"
@@ -181,6 +182,14 @@ static void on_sync(void) {
     if (rc != 0) {
         ESP_LOGE(TAG, "address inference failed: %d", rc);
         return;
+    }
+    uint8_t address[6];
+    if (ble_hs_id_copy_addr(own_address_type, address, NULL) == 0) {
+        char uri[48];
+        snprintf(uri, sizeof(uri), "PENDANT:V1:%02X%02X%02X%02X%02X%02X",
+                 address[5], address[4], address[3], address[2], address[1], address[0]);
+        app_state_set_pairing_uri(uri);
+        ESP_LOGI(TAG, "QR pairing identity ready");
     }
     start_advertising();
 }

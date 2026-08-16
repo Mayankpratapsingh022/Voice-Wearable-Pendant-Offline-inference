@@ -66,3 +66,9 @@ Curious, Happy, Surprised, Skeptical, and Sleepy. The `<` and `>` buttons step
 through the same list. These controls sit above the push-to-talk area, so they
 will not start a recording. The small `x` in the upper-left turns the AMOLED
 off; tap the face once to wake it, then press and hold the face to talk.
+## AMOLED stability prerequisite
+
+Before a clean ESP-IDF build, source `export.sh` and run
+`./scripts/apply-display-dma-fix.sh` once. It enables direct PSRAM DMA for the
+AMOLED draw buffers, avoiding the SPI DMA memory exhaustion that otherwise
+breaks display refresh, touch and button responsiveness on this board.

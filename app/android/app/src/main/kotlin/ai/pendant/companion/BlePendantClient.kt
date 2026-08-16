@@ -97,6 +97,29 @@ class BlePendantClient(
         scanner?.startScan(listOf(filter), settings, scanCallback)
     }
 
+    /** QR pairing connects to the exact Pendant address instead of a broad scan. */
+    @SuppressLint("MissingPermission")
+    fun connectKnownAddress(address: String) {
+        if (!hasConnectPermission()) {
+            listener.onError("Bluetooth permission is not granted")
+            return
+        }
+        val adapter = manager?.adapter ?: run {
+            listener.onError("Bluetooth is not available")
+            return
+        }
+        if (!BluetoothAdapter.checkBluetoothAddress(address)) {
+            listener.onError("Invalid Pendant QR address")
+            return
+        }
+        reconnectEnabled = true
+        cancelReconnect()
+        stopScan()
+        gatt?.close()
+        listener.onConnectionChanged(Connection.CONNECTING)
+        gatt = adapter.getRemoteDevice(address).connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+    }
+
     @SuppressLint("MissingPermission")
     fun sendControl(opcode: Byte, message: String? = null) {
         val messageBytes = message.orEmpty().encodeToByteArray().take(VoiceLink.MAX_PAYLOAD - 1).toByteArray()
@@ -111,6 +134,14 @@ class BlePendantClient(
         require(ssidBytes.isNotEmpty() && ssidBytes.size <= 32)
         require(passwordBytes.size <= 63)
         val payload = byteArrayOf(VoiceLink.WIFI_PROVISION, ssidBytes.size.toByte(), passwordBytes.size.toByte()) + ssidBytes + passwordBytes
+        send(control, VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, payload), false)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun sendVisualProfile(profile: Int, moonPhase: Int) {
+        require(profile in 0..3)
+        require(moonPhase in 0..100)
+        val payload = byteArrayOf(VoiceLink.VISUAL_PROFILE_SET, profile.toByte(), moonPhase.toByte())
         send(control, VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, payload), false)
     }
 

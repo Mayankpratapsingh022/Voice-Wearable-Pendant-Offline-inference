@@ -22,7 +22,7 @@ class MainActivity : FlutterActivity() {
 
     private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "requestBluetoothPermissions" -> requestBluetoothPermissions(result)
+            "requestBluetoothPermissions" -> requestNetworkPermissions(result)
             "start" -> {
                 PendantService.start(this)
                 result.success(null)
@@ -30,6 +30,17 @@ class MainActivity : FlutterActivity() {
             "startPairing" -> {
                 PendantService.pair(this)
                 result.success(null)
+            }
+            "pairFromQr" -> {
+                val code = call.argument<String>("code").orEmpty().trim()
+                // The MAC suffix is case-insensitive; the QR password is not.
+                val match = Regex("^PENDANT:W:([0-9A-Fa-f]{6}):(.{8,63})$").matchEntire(code)
+                if (match == null) {
+                    result.error("invalid_qr", "This is not a Pendant Wi-Fi QR code", null)
+                } else {
+                    PendantService.connectWifiAp(this, "PENDANT-${match.groupValues[1].uppercase()}", match.groupValues[2])
+                    result.success(null)
+                }
             }
             "provisionWifi" -> {
                 val ssid = call.argument<String>("ssid").orEmpty()
@@ -46,18 +57,35 @@ class MainActivity : FlutterActivity() {
                 ModelDownloadManager.start(applicationContext)
                 result.success(null)
             }
+            "cloudSettings" -> result.success(CloudSettings.snapshot(applicationContext).toMap())
+            "saveCloudSettings" -> {
+                val settings = CloudSettings.update(
+                    applicationContext,
+                    mode = call.argument<String>("mode").orEmpty().ifBlank { "cloud" },
+                    voice = call.argument<String>("voice").orEmpty(),
+                    apiKey = call.argument<String>("apiKey"),
+                )
+                result.success(settings.toMap())
+            }
+            "setVisualProfile" -> {
+                val profile = call.argument<Int>("profile") ?: -1
+                val moonPhase = call.argument<Int>("moonPhase") ?: 100
+                if (profile !in 0..3 || moonPhase !in 0..100) {
+                    result.error("invalid_profile", "Unknown screensaver profile", null)
+                } else {
+                    CloudSettings.setVisualProfile(applicationContext, profile, moonPhase)
+                    PendantService.setVisualProfile(this, profile, moonPhase)
+                    result.success(null)
+                }
+            }
             else -> result.notImplemented()
         }
     }
 
-    private fun requestBluetoothPermissions(result: MethodChannel.Result) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            result.success(null)
-            return
-        }
+    private fun requestNetworkPermissions(result: MethodChannel.Result) {
         val permissions = buildList {
-            add(Manifest.permission.BLUETOOTH_SCAN)
-            add(Manifest.permission.BLUETOOTH_CONNECT)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -79,7 +107,7 @@ class MainActivity : FlutterActivity() {
         if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
             val granted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
             pendingPermissionResult?.let { result ->
-                if (granted) result.success(null) else result.error("permission_denied", "Bluetooth permission is required", null)
+                if (granted) result.success(null) else result.error("permission_denied", "Wi-Fi permission is required", null)
             }
             pendingPermissionResult = null
         }

@@ -39,6 +39,10 @@ typedef enum {
     // Pendant -> phone BLE status. The trailing UTF-8 text is its local IP.
     VOICE_CONTROL_WIFI_READY = 0x10,
     VOICE_CONTROL_WIFI_FAILED = 0x11,
+    // Phone -> pendant: one visual-profile byte. Pendant -> phone echoes the
+    // active profile so the Android settings view reflects persisted state.
+    VOICE_CONTROL_VISUAL_PROFILE_SET = 0x12,
+    VOICE_CONTROL_VISUAL_PROFILE = 0x13,
 } voice_control_opcode_t;
 
 typedef struct {

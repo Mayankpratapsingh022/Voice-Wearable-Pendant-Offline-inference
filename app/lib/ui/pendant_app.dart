@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../models/pendant_models.dart';
 import '../platform/pendant_bridge.dart';
@@ -40,6 +44,7 @@ class _PendantHomeState extends State<PendantHome> {
   final searchController = TextEditingController();
   final hotspotNameController = TextEditingController();
   final hotspotPasswordController = TextEditingController();
+  final sarvamKeyController = TextEditingController();
   late final Future<void> bootstrap = controller.initialize();
 
   @override
@@ -47,6 +52,7 @@ class _PendantHomeState extends State<PendantHome> {
     searchController.dispose();
     hotspotNameController.dispose();
     hotspotPasswordController.dispose();
+    sarvamKeyController.dispose();
     controller.dispose();
     super.dispose();
   }
@@ -78,6 +84,13 @@ class _PendantHomeState extends State<PendantHome> {
                 ssidController: hotspotNameController,
                 passwordController: hotspotPasswordController,
                 onProvision: controller.provisionWifi,
+              ),
+              const SizedBox(height: 16),
+              _ScreensaverPanel(controller: controller),
+              const SizedBox(height: 16),
+              _CloudVoiceSettingsPanel(
+                controller: controller,
+                sarvamKeyController: sarvamKeyController,
               ),
               const SizedBox(height: 16),
               _LivePipeline(controller: controller),
@@ -209,6 +222,309 @@ class _WifiFallbackSetup extends StatelessWidget {
         const SnackBar(content: Text('Sending hotspot setup to pendant…')),
       );
     }
+  }
+}
+
+class _ScreensaverPanel extends StatefulWidget {
+  const _ScreensaverPanel({required this.controller});
+  final PendantController controller;
+
+  @override
+  State<_ScreensaverPanel> createState() => _ScreensaverPanelState();
+}
+
+class _ScreensaverPanelState extends State<_ScreensaverPanel> {
+  late double moonPhase = widget.controller.moonPhase.toDouble();
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.controller.visualProfile;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xff071013),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: const Color(0xffdbe7ff).withValues(alpha: .28),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(Icons.auto_awesome_rounded, color: Color(0xffdbe7ff)),
+              SizedBox(width: 10),
+              Text('Pendant screensaver'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Choose the exact idle visual shown on the pendant. Listening and speaking always use the original orbital strands with only subtle brightness and speed response.',
+          ),
+          const SizedBox(height: 16),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: .92,
+            children: <Widget>[
+              _VisualChoice(
+                profile: VisualProfile.moonLoop,
+                selected: selected,
+                asset: 'assets/visuals/moon-loop.gif',
+                onTap: _select,
+              ),
+              _VisualChoice(
+                profile: VisualProfile.moonStill,
+                selected: selected,
+                asset: 'assets/visuals/moon-still.png',
+                onTap: _select,
+              ),
+              _VisualChoice(
+                profile: VisualProfile.orbitalLoop,
+                selected: selected,
+                asset: 'assets/visuals/orbital-loop.gif',
+                onTap: _select,
+              ),
+              _VisualChoice(
+                profile: VisualProfile.orbitalStill,
+                selected: selected,
+                asset: 'assets/visuals/orbital-still.png',
+                onTap: _select,
+              ),
+            ],
+          ),
+          if (selected == VisualProfile.moonStill) ...<Widget>[
+            const SizedBox(height: 18),
+            Text(
+              'Moon phase — ${_moonLabel(moonPhase)}',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            Slider(
+              value: moonPhase,
+              min: 0,
+              max: 100,
+              divisions: 100,
+              label: _moonLabel(moonPhase),
+              onChanged: (value) => setState(() => moonPhase = value),
+              onChangeEnd: (value) => widget.controller.setVisualProfile(
+                VisualProfile.moonStill,
+                moonPhase: value.round(),
+              ),
+            ),
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Text('Crescent'),
+                Text('Half'),
+                Text('Gibbous'),
+                Text('Full'),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _select(VisualProfile profile) async {
+    if (profile == VisualProfile.moonStill)
+      moonPhase = widget.controller.moonPhase.toDouble();
+    setState(() {});
+    await widget.controller.setVisualProfile(
+      profile,
+      moonPhase: moonPhase.round(),
+    );
+  }
+
+  static String _moonLabel(double value) {
+    if (value < 25) return 'Crescent';
+    if (value < 55) return 'Half moon';
+    if (value < 85) return 'Gibbous';
+    return 'Full moon';
+  }
+}
+
+class _VisualChoice extends StatelessWidget {
+  const _VisualChoice({
+    required this.profile,
+    required this.selected,
+    required this.asset,
+    required this.onTap,
+  });
+  final VisualProfile profile;
+  final VisualProfile selected;
+  final String asset;
+  final Future<void> Function(VisualProfile) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = profile == selected;
+    final color = active ? const Color(0xff56e5ff) : Colors.white24;
+    return InkWell(
+      onTap: () => onTap(profile),
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: color, width: active ? 2 : 1),
+        ),
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          children: <Widget>[
+            Expanded(
+              child: ClipOval(
+                child: Image.asset(
+                  asset,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                ),
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              profile.label,
+              style: TextStyle(
+                color: active ? const Color(0xff56e5ff) : Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CloudVoiceSettingsPanel extends StatefulWidget {
+  const _CloudVoiceSettingsPanel({
+    required this.controller,
+    required this.sarvamKeyController,
+  });
+  final PendantController controller;
+  final TextEditingController sarvamKeyController;
+
+  @override
+  State<_CloudVoiceSettingsPanel> createState() =>
+      _CloudVoiceSettingsPanelState();
+}
+
+class _CloudVoiceSettingsPanelState extends State<_CloudVoiceSettingsPanel> {
+  String mode = 'cloud';
+  String voice = '';
+  bool hydrated = false;
+  static const voices = <String>[
+    'ratan',
+    'priya',
+    'ishita',
+    'shubh',
+    'ritu',
+    'mani',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = widget.controller.cloudSettings;
+    if (!hydrated && settings != null) {
+      hydrated = true;
+      mode = settings.mode;
+      voice = settings.voice;
+    }
+    final cloudReady =
+        settings != null && settings.hasApiKey && settings.voice.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xff0b0d11),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: cloudReady
+              ? const Color(0xff52f39a).withValues(alpha: .55)
+              : const Color(0xffffc857).withValues(alpha: .45),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(Icons.cloud_rounded, color: Color(0xff56e5ff)),
+              SizedBox(width: 10),
+              Text('Cloud Voice — Sarvam'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            cloudReady
+                ? 'Cloud Voice ready — live Saaras STT, Sarvam-30B, and Bulbul v3.'
+                : 'Add your Sarvam API key and choose a voice. The key stays encrypted on this phone.',
+          ),
+          const SizedBox(height: 14),
+          SegmentedButton<String>(
+            segments: const <ButtonSegment<String>>[
+              ButtonSegment(value: 'cloud', label: Text('Cloud')),
+              ButtonSegment(value: 'local', label: Text('Local')),
+            ],
+            selected: <String>{mode},
+            onSelectionChanged: (value) => setState(() => mode = value.first),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: widget.sarvamKeyController,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: settings?.hasApiKey == true
+                  ? 'Replace Sarvam API key (optional)'
+                  : 'Sarvam API key',
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            value: voice.isEmpty ? null : voice,
+            decoration: const InputDecoration(labelText: 'Bulbul v3 voice'),
+            items: voices
+                .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+                .toList(),
+            onChanged: (value) => setState(() => voice = value ?? ''),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              FilledButton.icon(
+                onPressed: _save,
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Save secure settings'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Local is reserved for the future native runtime. It does not pretend that downloaded model files can already process speech.',
+            style: TextStyle(fontSize: 12, color: Colors.white60),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    await widget.controller.saveCloudSettings(
+      mode: mode,
+      voice: voice,
+      apiKey: widget.sarvamKeyController.text.isEmpty
+          ? null
+          : widget.sarvamKeyController.text,
+    );
+    widget.sarvamKeyController.clear();
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cloud Voice settings saved securely.')),
+      );
   }
 }
 
@@ -635,14 +951,62 @@ class _CompanionCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(controller.message, textAlign: TextAlign.center),
           const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: connected ? null : controller.pair,
-            icon: const Icon(Icons.bluetooth_searching),
-            label: Text(connected ? 'Pendant connected' : 'Pair pendant'),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const _PendantCameraDebugView(),
+              ),
+            ),
+            icon: const Icon(Icons.camera_alt_outlined),
+            label: const Text('Open pendant camera'),
           ),
+          const SizedBox(height: 12),
+          if (connected)
+            FilledButton.icon(
+              onPressed: null,
+              icon: Icon(Icons.check_circle_outline),
+              label: Text('Pendant connected'),
+            )
+          else
+            Column(
+              children: <Widget>[
+                FilledButton.icon(
+                  onPressed: () => _scanAndPair(context),
+                  icon: const Icon(Icons.qr_code_scanner_rounded),
+                  label: const Text('Connect with pendant Wi-Fi QR'),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Press PWR or BOOT once. Scanning connects directly over Wi-Fi—no Bluetooth pairing.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+              ],
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _scanAndPair(BuildContext context) async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const _PendantQrScanner()),
+    );
+    if (code == null || !context.mounted) return;
+    try {
+      await controller.pairFromQr(code);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Connecting to your Pendant…')),
+        );
+      }
+    } on Exception catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not pair: $error')));
+      }
+    }
   }
 
   static String _title(PendantConnection connection, AssistantPhase phase) {
@@ -661,6 +1025,382 @@ class _CompanionCard extends StatelessWidget {
       AssistantPhase.error => 'Needs attention',
     };
   }
+}
+
+class _PendantQrScanner extends StatefulWidget {
+  const _PendantQrScanner();
+
+  @override
+  State<_PendantQrScanner> createState() => _PendantQrScannerState();
+}
+
+class _PendantQrScannerState extends State<_PendantQrScanner> {
+  final MobileScannerController scanner = MobileScannerController(
+    facing: CameraFacing.back,
+    formats: const <BarcodeFormat>[BarcodeFormat.qrCode],
+    detectionSpeed: DetectionSpeed.normal,
+    autoZoom: true,
+    cameraResolution: const Size(1280, 720),
+  );
+  bool found = false;
+  double zoom = 1;
+
+  @override
+  void dispose() {
+    scanner.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(title: const Text('Scan Pendant QR')),
+    body: LayoutBuilder(
+      builder: (context, constraints) {
+        final target = (constraints.maxWidth * .78).clamp(260.0, 340.0);
+        final window = Rect.fromCenter(
+          center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2),
+          width: target,
+          height: target,
+        );
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            MobileScanner(
+              controller: scanner,
+              scanWindow: window,
+              tapToFocus: true,
+              errorBuilder: (_, error) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Camera unavailable: ${error.errorDetails?.message ?? error.errorCode.name}',
+                  ),
+                ),
+              ),
+              onDetect: (capture) {
+                if (found) return;
+                final raw = capture.barcodes.firstOrNull?.rawValue?.trim();
+                if (raw == null ||
+                    !RegExp(
+                      r'^PENDANT:W:[0-9A-Fa-f]{6}:.{8,63}$',
+                    ).hasMatch(raw)) {
+                  return;
+                }
+                found = true;
+                scanner.stop();
+                Navigator.of(context).pop(raw);
+              },
+            ),
+            Center(
+              child: Container(
+                width: target,
+                height: target,
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xff52f39a), width: 3),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(color: Color(0x6652f39a), blurRadius: 26),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 18,
+              right: 18,
+              child: ValueListenableBuilder<MobileScannerState>(
+                valueListenable: scanner,
+                builder: (_, state, _) => IconButton.filledTonal(
+                  tooltip: 'Toggle torch',
+                  onPressed: scanner.toggleTorch,
+                  icon: Icon(
+                    state.torchState == TorchState.on
+                        ? Icons.flashlight_on_rounded
+                        : Icons.flashlight_off_rounded,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 30,
+              right: 30,
+              bottom: 24,
+              child: Column(
+                children: <Widget>[
+                  Text(
+                    'Fit the whole pendant QR inside the green frame. Use scale if it is small.',
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Rear camera • QR-only • tap to focus • Wi-Fi pairing',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: <Widget>[
+                      const Icon(Icons.zoom_out_rounded, size: 18),
+                      Expanded(
+                        child: Slider(
+                          value: zoom,
+                          min: 1,
+                          max: 4,
+                          divisions: 12,
+                          label: '${zoom.toStringAsFixed(1)}×',
+                          onChanged: (value) => setState(() => zoom = value),
+                          onChangeEnd: scanner.setZoomScale,
+                        ),
+                      ),
+                      const Icon(Icons.zoom_in_rounded, size: 18),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+/// Full-screen camera view for visually checking the pendant during hardware
+/// debugging. QR detections are intentionally ignored so this view remains
+/// open while a button is pressed or the screen is tapped.
+class _PendantCameraDebugView extends StatefulWidget {
+  const _PendantCameraDebugView();
+
+  @override
+  State<_PendantCameraDebugView> createState() =>
+      _PendantCameraDebugViewState();
+}
+
+class _PendantCameraDebugViewState extends State<_PendantCameraDebugView> {
+  CameraController? camera;
+  late final Future<void> cameraReady = _openCamera();
+  XFile? capturedFrame;
+  bool torchEnabled = false;
+
+  Future<void> _openCamera() async {
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) {
+      throw StateError('No camera is available on this phone.');
+    }
+    final rearCameras = cameras
+        .where((device) => device.lensDirection == CameraLensDirection.back)
+        .toList();
+    camera = CameraController(
+      rearCameras.isNotEmpty ? rearCameras.first : cameras.first,
+      ResolutionPreset.high,
+      enableAudio: false,
+    );
+    await camera!.initialize();
+  }
+
+  Future<void> _takePicture() async {
+    final activeCamera = camera;
+    if (activeCamera == null || !activeCamera.value.isInitialized) return;
+    try {
+      final frame = await activeCamera.takePicture();
+      if (mounted) setState(() => capturedFrame = frame);
+    } on CameraException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not capture pendant: ${error.description ?? error.code}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleTorch() async {
+    final activeCamera = camera;
+    if (activeCamera == null) return;
+    final next = !torchEnabled;
+    try {
+      await activeCamera.setFlashMode(next ? FlashMode.torch : FlashMode.off);
+      if (mounted) setState(() => torchEnabled = next);
+    } on CameraException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Torch is not available on this camera.'),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    camera?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (capturedFrame case final frame?) {
+      return _CapturedPendantFrame(
+        file: File(frame.path),
+        onRetake: () => setState(() => capturedFrame = null),
+      );
+    }
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Pendant camera'),
+        actions: <Widget>[
+          IconButton(
+            tooltip: torchEnabled ? 'Turn torch off' : 'Turn torch on',
+            onPressed: _toggleTorch,
+            icon: Icon(
+              torchEnabled
+                  ? Icons.flashlight_on_rounded
+                  : Icons.flashlight_off_rounded,
+            ),
+          ),
+        ],
+      ),
+      body: FutureBuilder<void>(
+        future: cameraReady,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Camera unavailable: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          if (snapshot.connectionState != ConnectionState.done ||
+              camera == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              CameraPreview(camera!),
+              Center(
+                child: IgnorePointer(
+                  child: Container(
+                    width: 260,
+                    height: 260,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: const Color(0xff52f39a).withValues(alpha: .85),
+                        width: 2,
+                      ),
+                      boxShadow: const <BoxShadow>[
+                        BoxShadow(color: Color(0x4452F39A), blurRadius: 28),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 20,
+                right: 20,
+                bottom: 28,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xdd071013),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0x6652f39a)),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text('Live pendant debug view'),
+                          SizedBox(height: 6),
+                          Text(
+                            'Centre the pendant in the ring, then tap its screen. '
+                            'Tap the phone preview to focus. Use your phone’s '
+                            'screenshot or screen recording controls to capture it.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 216,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: FilledButton.icon(
+                    onPressed: _takePicture,
+                    icon: const Icon(Icons.camera_alt_rounded),
+                    label: const Text('Capture'),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CapturedPendantFrame extends StatelessWidget {
+  const _CapturedPendantFrame({required this.file, required this.onRetake});
+
+  final File file;
+  final VoidCallback onRetake;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(title: const Text('Captured pendant frame')),
+    body: Column(
+      children: <Widget>[
+        Expanded(
+          child: Center(child: InteractiveViewer(child: Image.file(file))),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onRetake,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Retake'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Done'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _FacePreview extends StatelessWidget {

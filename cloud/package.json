@@ -1,0 +1,22 @@
+{
+  "name": "pendant-sarvam-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "opusscript": "^0.1.1",
+    "tsx": "^4.19.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.13.5",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,5 +1,46 @@
 enum PendantConnection { pairing, disconnected, connecting, connected }
 
+enum VisualProfile { moonLoop, moonStill, orbitalLoop, orbitalStill }
+
+extension VisualProfileWire on VisualProfile {
+  int get wireValue => index;
+  String get label => switch (this) {
+    VisualProfile.moonLoop => 'Moon loop',
+    VisualProfile.moonStill => 'Moon still',
+    VisualProfile.orbitalLoop => 'Orbital loop',
+    VisualProfile.orbitalStill => 'Orbital still',
+  };
+}
+
+class CloudVoiceSettings {
+  const CloudVoiceSettings({
+    required this.mode,
+    required this.voice,
+    required this.hasApiKey,
+    required this.visualProfile,
+    required this.moonPhase,
+  });
+
+  factory CloudVoiceSettings.fromMap(Map<Object?, Object?> map) =>
+      CloudVoiceSettings(
+        mode: map['mode'] as String? ?? 'cloud',
+        voice: map['voice'] as String? ?? '',
+        hasApiKey: map['hasApiKey'] == true,
+        visualProfile: VisualProfile.values.elementAt(
+          ((map['visualProfile'] as num?)?.toInt() ?? 0).clamp(0, 3).toInt(),
+        ),
+        moonPhase: ((map['moonPhase'] as num?)?.toInt() ?? 100)
+            .clamp(0, 100)
+            .toInt(),
+      );
+
+  final String mode;
+  final String voice;
+  final bool hasApiKey;
+  final VisualProfile visualProfile;
+  final int moonPhase;
+}
+
 class ModelPackStatus {
   const ModelPackStatus({
     required this.ready,
@@ -90,6 +131,8 @@ class PendantEvent {
     this.connection,
     this.phase,
     this.note,
+    this.visualProfile,
+    this.moonPhase,
   });
 
   factory PendantEvent.fromMap(Map<Object?, Object?> map) {
@@ -108,6 +151,14 @@ class PendantEvent {
       note: map['note'] is Map<Object?, Object?>
           ? NoteSummary.fromMap(map['note'] as Map<Object?, Object?>)
           : null,
+      visualProfile: map['visualProfile'] is num
+          ? VisualProfile.values.elementAt(
+              (map['visualProfile'] as num).toInt().clamp(0, 3).toInt(),
+            )
+          : null,
+      moonPhase: map['moonPhase'] is num
+          ? (map['moonPhase'] as num).toInt().clamp(0, 100).toInt()
+          : null,
     );
   }
 
@@ -116,6 +167,8 @@ class PendantEvent {
   final PendantConnection? connection;
   final AssistantPhase? phase;
   final NoteSummary? note;
+  final VisualProfile? visualProfile;
+  final int? moonPhase;
 }
 
 AssistantPhase? _phaseOrNull(String? name) {

@@ -1,0 +1,9 @@
+diff --git a/components/esp_lcd/spi/esp_lcd_panel_io_spi.c b/components/esp_lcd/spi/esp_lcd_panel_io_spi.c
+--- a/components/esp_lcd/spi/esp_lcd_panel_io_spi.c
++++ b/components/esp_lcd/spi/esp_lcd_panel_io_spi.c
+@@ -374,6 +374,7 @@ static esp_err_t panel_io_spi_tx_color(esp_lcd_panel_io_t *io, int lcd_cmd, con
+         lcd_trans->flags.dc_gpio_level = spi_panel_io->flags.dc_data_level; // set D/C level in data phase
+         lcd_trans->base.length = chunk_size * 8; // transaction length is in bits
+         lcd_trans->base.tx_buffer = color;
++        lcd_trans->base.flags |= SPI_TRANS_DMA_USE_PSRAM;
+         if (spi_panel_io->flags.octal_mode) {

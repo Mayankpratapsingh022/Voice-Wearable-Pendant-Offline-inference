@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "bsp/esp32_s3_touch_amoled_1_75c.h"
+#include "app_state.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
@@ -66,6 +67,7 @@ static void button_task(void *arg) {
     int boot_stable = boot_candidate;
     uint32_t boot_candidate_since = now_ms();
     uint32_t last_boot_release = 0;
+    uint32_t last_boot_pairing_toggle = 0;
     uint32_t last_power_press = 0;
     uint32_t poll_counter = 0;
 
@@ -77,10 +79,12 @@ static void button_task(void *arg) {
             boot_candidate_since = now;
         } else if (boot_candidate != boot_stable && now - boot_candidate_since >= BOOT_DEBOUNCE_MS) {
             boot_stable = boot_candidate;
+            ESP_LOGI(TAG, "BOOT %s", boot_stable == 0 ? "pressed" : "released");
             // BOOT is active-low. Count a release as one deliberate click.
             if (boot_stable != 0) {
                 if (last_boot_release != 0 && now - last_boot_release <= BOOT_DOUBLE_PRESS_MS) {
                     last_boot_release = 0;
+                    ESP_LOGI(TAG, "BOOT double press: meeting toggle");
                     voice_runtime_request_meeting_toggle();
                 } else {
                     last_boot_release = now;
@@ -89,6 +93,11 @@ static void button_task(void *arg) {
         }
         if (last_boot_release != 0 && now - last_boot_release > BOOT_DOUBLE_PRESS_MS) {
             last_boot_release = 0;
+            // A single BOOT press is a reliable alternate QR trigger when
+            // the PMIC PWR key is unavailable on a board revision.
+            ESP_LOGI(TAG, "BOOT single press: toggling pairing QR");
+            last_boot_pairing_toggle = now;
+            voice_runtime_toggle_pairing_qr();
         }
 
         if (++poll_counter >= PWR_POLL_DIVIDER) {
@@ -98,7 +107,15 @@ static void button_task(void *arg) {
             // settle, otherwise one press alternates start/cancel repeatedly.
             if (poll_power_button() && (last_power_press == 0 || now - last_power_press >= PWR_PRESS_COOLDOWN_MS)) {
                 last_power_press = now;
-                voice_runtime_request_assistant();
+                // Some board revisions emit a false PMIC PWR event after a
+                // BOOT click. Do not undo the requested QR toggle; a genuine
+                // later PWR click can still return from QR to orbital.
+                if (last_boot_pairing_toggle != 0 && now - last_boot_pairing_toggle < 900) {
+                    ESP_LOGI(TAG, "ignoring stale PWR event after BOOT QR toggle");
+                } else {
+                    ESP_LOGI(TAG, "PWR short press: assistant request");
+                    voice_runtime_request_assistant();
+                }
             }
         }
         vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
@@ -109,7 +126,7 @@ esp_err_t button_input_init(void) {
     const gpio_config_t boot_config = {
         .pin_bit_mask = 1ULL << BOOT_BUTTON_GPIO,
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };

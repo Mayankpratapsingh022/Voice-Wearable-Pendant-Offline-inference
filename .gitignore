@@ -59,3 +59,7 @@ tools/rive-eaf-export/out/
 /24941-46557-expression-grid.riv
 /tools/rive-eaf-export/
 /scripts/package_orbital_frames.py
+
+# Cloud relay dependencies and developer-only credentials
+/cloud/node_modules/
+/cloud/.env

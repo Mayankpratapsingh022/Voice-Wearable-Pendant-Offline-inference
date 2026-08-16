@@ -4,9 +4,11 @@
 #include <string.h>
 
 #include "ble_transport.h"
+#include "app_state.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -25,6 +27,17 @@ static SemaphoreHandle_t socket_lock;
 static TaskHandle_t server_task_handle;
 static bool server_running;
 static uint16_t sequence;
+
+#define PENDANT_AP_PASSWORD "pnd2026!"
+
+static void wifi_server_task(void *arg);
+
+static void start_voice_server(void) {
+    if (!server_running) {
+        server_running = true;
+        xTaskCreate(wifi_server_task, "wifi_voice", 6144, NULL, 5, &server_task_handle);
+    }
+}
 
 static bool recv_all(int socket_fd, uint8_t *buffer, size_t size) {
     size_t received = 0;
@@ -127,10 +140,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, vo
     esp_ip4addr_ntoa(&event->ip_info.ip, ip, sizeof(ip));
     ESP_LOGI(TAG, "joined hotspot at %s", ip);
     send_ble_status(VOICE_CONTROL_WIFI_READY, ip);
-    if (!server_running) {
-        server_running = true;
-        xTaskCreate(wifi_server_task, "wifi_voice", 6144, NULL, 5, &server_task_handle);
-    }
+    start_voice_server();
 }
 
 esp_err_t wifi_transport_init(void) {
@@ -140,13 +150,30 @@ esp_err_t wifi_transport_init(void) {
     const esp_err_t loop_result = esp_event_loop_create_default();
     ESP_RETURN_ON_FALSE(loop_result == ESP_OK || loop_result == ESP_ERR_INVALID_STATE, loop_result, TAG, "event loop init failed");
     esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
     const wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&config), TAG, "wifi init failed");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, NULL), TAG, "wifi event registration failed");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, NULL), TAG, "ip event registration failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_FLASH), TAG, "wifi storage init failed");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "wifi mode init failed");
-    return esp_wifi_start();
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "wifi mode init failed");
+    uint8_t mac[6] = {0};
+    ESP_RETURN_ON_ERROR(esp_read_mac(mac, ESP_MAC_WIFI_STA), TAG, "Wi-Fi MAC unavailable");
+    wifi_config_t ap = {0};
+    snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "PENDANT-%02X%02X%02X", mac[3], mac[4], mac[5]);
+    strlcpy((char *)ap.ap.password, PENDANT_AP_PASSWORD, sizeof(ap.ap.password));
+    ap.ap.ssid_len = strlen((char *)ap.ap.ssid);
+    ap.ap.channel = 6;
+    ap.ap.max_connection = 1;
+    ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap), TAG, "Wi-Fi AP config failed");
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "Wi-Fi start failed");
+    char qr[48];
+    snprintf(qr, sizeof(qr), "PENDANT:W:%02X%02X%02X:%s", mac[3], mac[4], mac[5], PENDANT_AP_PASSWORD);
+    app_state_set_pairing_uri(qr);
+    start_voice_server();
+    ESP_LOGI(TAG, "Wi-Fi pairing AP ready: %s", ap.ap.ssid);
+    return ESP_OK;
 }
 
 esp_err_t wifi_transport_provision(const uint8_t *ssid, size_t ssid_size, const uint8_t *password, size_t password_size) {

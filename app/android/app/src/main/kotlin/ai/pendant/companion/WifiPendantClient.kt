@@ -52,6 +52,12 @@ class WifiPendantClient(private val listener: Listener) {
         send(VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, byteArrayOf(opcode) + text))
     }
 
+    fun sendVisualProfile(profile: Int, moonPhase: Int) {
+        require(profile in 0..3)
+        require(moonPhase in 0..100)
+        send(VoiceLink.Packet(VoiceLink.CONTROL, nextSequence(), nowMs(), 0, byteArrayOf(VoiceLink.VISUAL_PROFILE_SET, profile.toByte(), moonPhase.toByte())))
+    }
+
     fun sendSpeakerFrame(opus: ByteArray, timestampMs: Long, mouthLevel: Int) {
         send(VoiceLink.Packet(VoiceLink.SPEAKER_OPUS, nextSequence(), timestampMs, mouthLevel, opus))
     }
