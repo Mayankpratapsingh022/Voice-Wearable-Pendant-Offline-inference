@@ -40,7 +40,7 @@ android {
 }
 
 dependencies {
-    implementation("net.zetetic:sqlcipher-android:4.17.0")
+    implementation("net.zetetic:sqlcipher-android:4.18.0")
     implementation("androidx.sqlite:sqlite:2.6.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
